@@ -1,0 +1,100 @@
+﻿[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k8s-arsenal"
+version = "0.4.0"
+description = "Kubernetes Attack Surface Analyzer & Red Team Playbook"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "singerhur" }
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "kubernetes>=27.0.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+
+]
+
+[project.optional-dependencies]
+cloud = [
+    "boto3>=1.34.0",
+    "google-cloud-container>=2.0.0",
+    "azure-identity>=1.15.0",
+    "azure-mgmt-containerservice>=28.0.0",
+]
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "coverage>=7.3.0",
+]
+lint = [
+    "mypy>=1.8.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+k8s-arsenal = "k8s_arsenal.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/singerhur/k8s-arsenal"
+Documentation = "https://github.com/singerhur/k8s-arsenal#readme"
+Issues = "https://github.com/singerhur/k8s-arsenal/issues"
+
+[tool.setuptools.packages.find]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests requiring K8s cluster",
+    "slow: Slow tests",
+]
+
+[tool.coverage.run]
+source = ["k8s_arsenal"]
+omit = ["tests/*"]
+branch = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = ["tests", "build"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+

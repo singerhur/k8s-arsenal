@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.whl
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS files
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.coverage.*
+
+# Logs
+*.log
+
+# kubectl binaries (binary, not source)
+kubectl
+kubectl.bin
+kubectl.exe
+
+# MyPy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Package lock
+pip-wheel-metadata/
