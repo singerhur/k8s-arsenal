@@ -69,21 +69,46 @@ class TestCheckIsKubernetes:
 
 class TestCheckPrivileged:
     def test_uid_map_wide_range(self):
+        """privileged 容器：uid_map 匹配 host root + CapEff 全开 + seccomp 禁用"""
+        status_content = (
+            "Name:	test\n"
+            "CapEff:	000001ffffffffff\n"
+            "Seccomp:	0\n"
+        )
         uid_content = "         0          0 4294967295\n"
-        with patch("builtins.open", mock_open(read_data=uid_content)):
-            assert _check_privileged() is True
+        m_status = MagicMock()
+        m_status.__enter__.return_value.read.return_value = status_content
+        m_status.__enter__.return_value.__iter__.return_value = iter(status_content.splitlines(True))
+        m_uid = MagicMock()
+        m_uid.__enter__.return_value.read.return_value = uid_content
+        open_map = {
+            "/proc/self/status": m_status,
+            "/proc/self/uid_map": m_uid,
+        }
+        with patch("builtins.open", lambda p, *a, **kw: open_map.get(p, MagicMock())):
+            with patch("os.listdir", return_value=["null", "zero", "random"] * 20):
+                assert _check_privileged() is True
 
-    def test_uid_map_narrow_range(self):
-        content = "         0       1000          1\n"
-        m = MagicMock()
-        m.__enter__.return_value.__iter__.return_value = iter([])
-        m.__enter__.return_value.read.return_value = content
-        with patch("builtins.open", return_value=m):
-            assert _check_privileged() is False
-
-    def test_no_uid_map_file(self):
-        with patch("builtins.open", side_effect=FileNotFoundError):
-            assert _check_privileged() is False
+    def test_privileged_false_normal_container(self):
+        """普通 root 容器：CapEff 有限 + seccomp 开启 → 非 privileged"""
+        status_content = (
+            "Name:	test\n"
+            "CapEff:	00000000a80425fb\n"  # 16 caps, 非全开
+            "Seccomp:	2\n"                   # filter mode
+        )
+        uid_content = "         0          0 4294967295\n"
+        m_status = MagicMock()
+        m_status.__enter__.return_value.read.return_value = status_content
+        m_status.__enter__.return_value.__iter__.return_value = iter(status_content.splitlines(True))
+        m_uid = MagicMock()
+        m_uid.__enter__.return_value.read.return_value = uid_content
+        open_map = {
+            "/proc/self/status": m_status,
+            "/proc/self/uid_map": m_uid,
+        }
+        with patch("builtins.open", lambda p, *a, **kw: open_map.get(p, MagicMock())):
+            with patch("os.listdir", return_value=["null", "zero"]):
+                assert _check_privileged() is False
 
 
 class TestGetCapabilities:
@@ -112,16 +137,28 @@ class TestCheckSensitiveMounts:
             assert _check_sensitive_mounts() == []
 
     def test_docker_sock_mounted(self):
-        content = "/  /var/run/docker.sock docker rw,relatime 0 0\n"
+        """真正的 hostPath 挂载 /var/run/docker.sock
+
+        使用 /proc/self/mountinfo 格式: id parent_id major:minor root mount_point options - fs_type ...
+        """
+        content = "123 100 0:42 / /var/run/docker.sock rw,relatime - ext4 /dev/sda1 rw\n"
         with patch("builtins.open", mock_open(read_data=content)):
             mounts = _check_sensitive_mounts()
             assert "/var/run/docker.sock" in mounts
 
-    def test_proc_mounted(self):
-        content = "proc /proc proc rw,relatime 0 0\n"
+    def test_proc_is_filtered(self):
+        """/proc 是容器自身虚拟文件系统，不应被报告为 hostPath 挂载"""
+        content = "10 1 0:4 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw\n"
         with patch("builtins.open", mock_open(read_data=content)):
             mounts = _check_sensitive_mounts()
-            assert "/proc" in mounts
+            assert "/proc" not in mounts, "container native /proc should not be flagged"
+
+    def test_host_root_mounted(self):
+        """真正的宿主机根文件系统挂载（通过 hostPath）"""
+        content = "200 150 0:55 / / rw,relatime - ext4 /dev/sda1 rw\n"
+        with patch("builtins.open", mock_open(read_data=content)):
+            mounts = _check_sensitive_mounts()
+            assert "/" in mounts
 
 
 class TestCheckPath:

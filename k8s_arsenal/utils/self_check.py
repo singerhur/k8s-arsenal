@@ -48,7 +48,11 @@ class SelfCheckReport:
 
     @property
     def risk_score(self) -> int:
-        """计算风险评分 (0-100)"""
+        """计算风险评分 (0-200)
+
+        FAIL = 权重全值，WARN = 权重半值。
+        取消 100 上限，让不同安全等级的 Pod 有明显区分度。
+        """
         weights = {
             RiskLevel.CRITICAL: 25,
             RiskLevel.HIGH: 15,
@@ -57,9 +61,11 @@ class SelfCheckReport:
         }
         score = 0
         for r in self.results:
-            if r.status in ("fail", "warn"):
+            if r.status == "fail":
                 score += weights.get(r.risk, 1)
-        return min(score, 100)
+            elif r.status == "warn":
+                score += weights.get(r.risk, 1) // 2
+        return min(score, 200)
 
 
 class PodSelfChecker:
@@ -329,12 +335,6 @@ class PodSelfChecker:
                 "/var/log": ("Host Logs", RiskLevel.HIGH,
                     "Host /var/log mounted — can create symlinks to steal credentials",
                     "Mount with readOnly: true, avoid recursive mount"),
-                "/proc": ("Host /proc", RiskLevel.HIGH,
-                    "Host /proc mounted — access to host processes, shell PID injection",
-                    "Avoid host /proc mounts"),
-                "/sys": ("Host /sys", RiskLevel.HIGH,
-                    "Host /sys mounted — kernel parameter manipulation",
-                    "Avoid host /sys mounts"),
                 "/etc/kubernetes": ("K8s PKI", RiskLevel.CRITICAL,
                     "Kubernetes PKI directory mounted — cluster compromise",
                     "Never mount K8s CA directories"),
@@ -346,8 +346,24 @@ class PodSelfChecker:
                     "Avoid mounting sensitive host directories"),
             }
 
-            for path, (name, risk, detail, remediation) in hostpath_risks.items():
-                if path in mounts:
+            # 容器自身的虚拟文件系统，不应被误判为 hostPath
+            _container_fs_types = {"proc", "sysfs", "cgroup", "cgroup2",
+                                   "devpts", "devtmpfs", "tmpfs", "mqueue",
+                                   "configfs", "bpf", "debugfs", "tracefs",
+                                   "fusectl", "securityfs", "pstore"}
+
+            # 逐行解析 /proc/self/mounts，精确匹配挂载点
+            for line in mounts.split("\n"):
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mount_point = parts[1]
+                fs_type = parts[2]
+                # 跳过容器自身的虚拟文件系统
+                if fs_type in _container_fs_types:
+                    continue
+                if mount_point in hostpath_risks:
+                    name, risk, detail, remediation = hostpath_risks[mount_point]
                     self._record("mounts", name, "fail", risk, detail, remediation)
 
             # RW hostPaths — parse mount point from field [1], skip device mounts
@@ -616,7 +632,7 @@ def print_self_check(report: Optional[SelfCheckReport] = None) -> SelfCheckRepor
     print(f"  Pod:           {report.pod_name}")
     print(f"  ServiceAccount:{report.service_account}")
     print(f"  Node:          {report.node_name}")
-    print(f"  Risk Score:    {report.risk_score}/100")
+    print(f"  Risk Score:    {report.risk_score}/200")
     print(f"{'='*60}\n")
 
     by_category: dict[str, list[SelfCheckResult]] = {}
@@ -634,7 +650,7 @@ def print_self_check(report: Optional[SelfCheckReport] = None) -> SelfCheckRepor
     print(f"\n{'='*60}")
     fail_count = sum(1 for r in report.results if r.status == "fail")
     warn_count = sum(1 for r in report.results if r.status == "warn")
-    print(f"  {fail_count} FAIL  {warn_count} WARN  Score: {report.risk_score}/100")
+    print(f"  {fail_count} FAIL  {warn_count} WARN  Score: {report.risk_score}/200")
     print(f"{'='*60}\n")
 
     return report

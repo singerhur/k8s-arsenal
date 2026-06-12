@@ -147,77 +147,148 @@ def _get_current_service_account() -> Optional[str]:
 
 
 def _check_privileged() -> bool:
-    """检测是否以 privileged 模式运行"""
-    # 方法 1: /proc/1/status 中的 seccomp
+    """检测是否以 privileged 模式运行
+
+    多信号综合判断：
+    1. CapEff 包含全部 capabilities（privileged 容器特征）
+    2. uid_map 匹配 host root + seccomp 禁用
+    3. /dev 设备数量（privileged 容器可见大量 host 设备）
+    """
+    signals = 0
+
+    # 信号 1: 完整 capabilities
     try:
-        with open("/proc/1/status", "r") as f:
+        with open("/proc/self/status", "r") as f:
             for line in f:
-                if "Seccomp:" in line:
-                    if "0" in line.split(":")[1].strip():
-                        # seccomp=0 且非默认 profile → 可能 privileged
-                        pass
-    except (FileNotFoundError, PermissionError):
+                if line.startswith("CapEff:"):
+                    cap_eff = int(line.split(":")[1].strip(), 16)
+                    # privileged 容器通常有全部 41 个 capability
+                    if cap_eff & 0x1FFFFFFFFFF == 0x1FFFFFFFFFF:
+                        signals += 2
+                    elif cap_eff.bit_count() >= 30:
+                        signals += 1
+                    break
+    except (FileNotFoundError, PermissionError, ValueError):
         pass
 
-    # 方法 2: 检查是否在初始 user namespace
-    # privileged 容器通常在 host 的 user ns 中
+    # 信号 2: uid_map 匹配 host root + seccomp 禁用
     try:
         with open("/proc/self/uid_map", "r") as f:
             uid_map = f.read().rstrip()
             if uid_map == "         0          0 4294967295":
-                return True
+                signals += 1
     except (FileNotFoundError, PermissionError):
         pass
 
-    return False
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("Seccomp:"):
+                    if line.split(":")[1].strip() == "0":
+                        signals += 1
+                    break
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    # 信号 3: /dev 设备数量（privileged ≥50，普通容器 <30）
+    try:
+        dev_count = len([d for d in os.listdir("/dev") if not d.startswith(".")])
+        if dev_count >= 50:
+            signals += 1
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    return signals >= 3
 
 
 def _check_host_pid() -> bool:
-    """检测 hostPID"""
-    # hostPID 时 /proc/1 是宿主机的 init 进程
+    """检测 hostPID
+
+    通过检查 PID 1 的进程名判断。hostPID 时 /proc/1 是宿主机的 init 进程；
+    非 hostPID 时 /proc/1 是容器入口点进程（如 sleep、bash）。
+
+    注意：不能比较 /proc/1/ns/pid 和 /proc/self/ns/pid，
+    因为在容器内两者始终在同一 PID namespace 中。
+    """
+    # 检查 PID 1 的 cmdline 是否为宿主机 init 进程
     try:
         with open("/proc/1/cmdline", "rb") as f:
             data = f.read()
-            # 宿主机 PID 1 通常是 init/systemd
             if b"systemd" in data or b"/sbin/init" in data:
                 return True
     except (FileNotFoundError, PermissionError):
         pass
 
-    # 备选：比较 /proc/1/ns/pid 与 /proc/self/ns/pid
+    # 备选：hostPID 时 PID 1 的 comm 通常是 init/systemd
     try:
-        pid1_ns = os.readlink("/proc/1/ns/pid")
-        self_ns = os.readlink("/proc/self/ns/pid")
-        if pid1_ns == self_ns:
-            return True
-    except (FileNotFoundError, PermissionError, OSError):
+        with open("/proc/1/comm", "r") as f:
+            comm = f.read().strip()
+            if comm in ("systemd", "init"):
+                return True
+    except (FileNotFoundError, PermissionError):
         pass
 
     return False
 
 
 def _check_host_network() -> bool:
-    """检测 hostNetwork"""
-    # hostNetwork 时网络 namespace 与宿主机相同
+    """检测 hostNetwork
+
+    通过检查网络接口数量判断。hostNetwork 时可见宿主机所有网络接口；
+    普通容器通常只有 1-3 个接口（lo + eth0）。
+
+    注意：不能比较 /proc/1/ns/net 和 /proc/self/ns/net，
+    因为在容器内两者始终在同一 network namespace 中。
+    """
+    # 方法 1: 网络接口数量判断（hostNetwork 通常 >5）
     try:
-        net1_ns = os.readlink("/proc/1/ns/net")
-        self_ns = os.readlink("/proc/self/ns/net")
-        if self_ns == net1_ns:
+        interfaces = [d for d in os.listdir("/sys/class/net")]
+        if len(interfaces) > 3:
             return True
-    except (FileNotFoundError, PermissionError, OSError):
+    except (FileNotFoundError, PermissionError):
         pass
+
+    # 方法 2: 检查是否存在典型 host 网卡
+    try:
+        host_ifaces = {"docker0", "cni0", "flannel.1", "cali", "weave", "vxlan"}
+        for iface in os.listdir("/sys/class/net"):
+            if iface in host_ifaces or any(
+                iface.startswith(prefix) for prefix in ("docker", "veth", "br-")
+            ):
+                return True
+    except (FileNotFoundError, PermissionError):
+        pass
+
     return False
 
 
 def _check_host_ipc() -> bool:
-    """检测 hostIPC"""
+    """检测 hostIPC
+
+    通过检查共享内存段判断。hostIPC 时可见宿主机所有 IPC 对象。
+
+    注意：不能比较 /proc/1/ns/ipc 和 /proc/self/ns/ipc，
+    因为在容器内两者始终在同一 IPC namespace 中。
+    """
+    # 检查 /proc/sysvipc/shm 中是否有多个段（宿主机通常有 systemd 等段）
     try:
-        ipc1_ns = os.readlink("/proc/1/ns/ipc")
-        self_ns = os.readlink("/proc/self/ns/ipc")
-        if ipc1_ns == self_ns:
-            return True
-    except (FileNotFoundError, PermissionError, OSError):
+        with open("/proc/sysvipc/shm", "r") as f:
+            lines = f.readlines()
+            # 除去表头，至少 2 条记录
+            if len(lines) >= 3:
+                return True
+    except (FileNotFoundError, PermissionError):
         pass
+
+    # 备选：检查 Semaphore 数组
+    try:
+        with open("/proc/sysvipc/sem", "r") as f:
+            lines = f.readlines()
+            if len(lines) >= 3:
+                return True
+    except (FileNotFoundError, PermissionError):
+        pass
+
     return False
 
 
@@ -264,28 +335,51 @@ def _get_capabilities() -> list[str]:
 def _check_sensitive_mounts() -> list[str]:
     """检测敏感路径挂载
 
-    检查 /proc/self/mountinfo 中是否存在对安全敏感的挂载。
+    逐行解析 /proc/self/mountinfo，匹配挂载点字段。
+    排除容器自身的虚拟文件系统挂载（proc、sysfs、cgroup 等）。
     """
-    sensitive_paths = [
-        "/var/run/docker.sock",
-        "/run/containerd/containerd.sock",
-        "/var/run/crio/crio.sock",
-        "/etc/kubernetes",
-        "/var/lib/kubelet",
-        "/var/lib/containerd",
-        "/var/lib/docker",
-        "/proc",
-        "/sys",
-        "/",
-    ]
+    sensitive_paths: dict[str, str] = {
+        "/var/run/docker.sock": "docker.sock",
+        "/run/containerd/containerd.sock": "containerd.sock",
+        "/var/run/crio/crio.sock": "crio.sock",
+        "/etc/kubernetes": "k8s_pki",
+        "/var/lib/kubelet": "kubelet_data",
+        "/var/lib/containerd": "containerd_data",
+        "/var/lib/docker": "docker_data",
+        "/proc": "host_proc",
+        "/sys": "host_sys",
+        "/": "host_root",
+    }
+
+    # 容器自身的虚拟文件系统类型，不是 hostPath 挂载
+    _container_fs_types = {"proc", "sysfs", "cgroup", "cgroup2", "devpts",
+                           "devtmpfs", "tmpfs", "mqueue", "configfs", "bpf",
+                           "debugfs", "tracefs", "fusectl", "securityfs", "pstore"}
 
     found = []
     try:
         with open("/proc/self/mountinfo", "r") as f:
-            content = f.read()
-            for sp in sensitive_paths:
-                if sp in content:
-                    found.append(sp)
+            for line in f:
+                parts = line.strip().split()
+                # mountinfo 格式: id parent_id major:minor root mount_point options ... fs_type
+                # fields: [0]=id, [1]=parent, [2]=dev, [3]=root, [4]=mount_point, ..., [-1]=fs_type
+                if len(parts) < 6:
+                    continue
+                mount_point = parts[4]
+                # 取最后一个空格分隔的字段作为文件系统类型
+                try:
+                    sep_idx = parts.index("-")
+                    fs_type = parts[sep_idx + 1] if sep_idx + 1 < len(parts) else ""
+                except ValueError:
+                    fs_type = ""
+
+                for sp, label in sensitive_paths.items():
+                    if mount_point == sp:
+                        # 排除容器自身的虚拟文件系统
+                        if fs_type in _container_fs_types:
+                            continue
+                        found.append(sp)
+                        break
     except (FileNotFoundError, PermissionError):
         pass
 
