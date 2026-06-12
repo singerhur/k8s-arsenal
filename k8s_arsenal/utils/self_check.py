@@ -214,7 +214,6 @@ class PodSelfChecker:
                         break
 
             if cap_eff is not None:
-                import ctypes
                 # 完整能力映射（Linux <5.13, 不含已废弃能力）
                 cap_names = {
                     0:   "CHOWN",
@@ -415,7 +414,24 @@ class PodSelfChecker:
             if "AWS_" in upper or "ECS_" in upper or "EKS_" in upper:
                 cloud_indicators.append("AWS")
                 break
-        if "GCP_" in os.environ.get("HOME", "") or os.path.exists("/var/run/secrets/gcp"):
+        # GCP: check metadata mount, env vars, and DMI (not HOME path)
+        gcp_detected = os.path.exists("/var/run/secrets/gcp")
+        if not gcp_detected:
+            for key in os.environ:
+                uk = key.upper()
+                if uk.startswith("GCP_") or "GOOGLE_CLOUD" in uk:
+                    gcp_detected = True
+                    break
+        if not gcp_detected:
+            for fpath in ["/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"]:
+                try:
+                    with open(fpath, "r") as f:
+                        if "google" in f.read().lower():
+                            gcp_detected = True
+                            break
+                except Exception:
+                    pass
+        if gcp_detected:
             cloud_indicators.append("GCP")
         for key in os.environ:
             if "AZURE_" in key.upper():
