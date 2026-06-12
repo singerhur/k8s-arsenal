@@ -350,10 +350,16 @@ class PodSelfChecker:
                 if path in mounts:
                     self._record("mounts", name, "fail", risk, detail, remediation)
 
-            # RW hostPaths
+            # RW hostPaths — parse mount point from field [1], skip device mounts
             rw_count = 0
             for line in mounts.split("\n"):
-                if "/dev/" not in line and " rw," in line and line.startswith("/"):
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                mount_point = parts[1]
+                options = parts[3]
+                # Only count RW non-device mounts (check mount_point, not device field)
+                if mount_point.startswith("/") and not mount_point.startswith("/dev/") and "rw," in options:
                     rw_count += 1
             if rw_count > 5:
                 self._record("mounts", "Many RW Mounts",

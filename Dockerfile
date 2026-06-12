@@ -7,9 +7,9 @@ RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc
     ca-certificates curl procps net-tools iproute2 docker.io && \
     rm -rf /var/lib/apt/lists/*
 
-# 从构建上下文复制 kubectl 二进制
-COPY kubectl.bin /usr/local/bin/kubectl
-RUN chmod +x /usr/local/bin/kubectl
+# 下载 kubectl（与 minikube K8s v1.35.1 匹配）
+RUN curl -fsSLo /usr/local/bin/kubectl https://dl.k8s.io/release/v1.35.1/bin/linux/amd64/kubectl && \
+    chmod +x /usr/local/bin/kubectl
 
 # 安装 k8s-arsenal（用清华 PyPI 镜像）
 COPY k8s_arsenal/ /app/k8s_arsenal/

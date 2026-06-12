@@ -59,9 +59,9 @@ def vectors_to_json(vectors: list[AttackVector], indent: int = 2) -> str:
             "phase": v.phase.value if hasattr(v.phase, "value") else str(v.phase),
             "risk": v.risk.value if hasattr(v.risk, "value") else str(v.risk),
             "description": v.description,
-            "prerequisites": v.prerequisites,
-            "steps": v.steps,
-            "detection_hints": v.detection_hints,
+            "prerequisites": getattr(v, 'prerequisites', None) or (getattr(v, 'required_capabilities', []) + getattr(v, 'required_conditions', [])),
+            "steps": getattr(v, 'steps', []),
+            "detection_hints": getattr(v, 'detection_hints', []),
         }
         if hasattr(v, "cve") and v.cve:
             entry["cve"] = v.cve
@@ -126,21 +126,24 @@ def vectors_to_markdown(vectors: list[AttackVector], title: str = "Attack Vector
             lines.append(v.description)
             lines.append("")
 
-            if v.prerequisites:
+            prereqs = getattr(v, 'prerequisites', None) or (getattr(v, 'required_capabilities', []) + getattr(v, 'required_conditions', []))
+            if prereqs:
                 lines.append("**Prerequisites:**")
-                for p in v.prerequisites:
+                for p in prereqs:
                     lines.append(f"- {p}")
                 lines.append("")
 
-            if v.steps:
+            steps = getattr(v, 'steps', [])
+            if steps:
                 lines.append("**Attack Steps:**")
-                for i, s in enumerate(v.steps, 1):
+                for i, s in enumerate(steps, 1):
                     lines.append(f"{i}. {s}")
                 lines.append("")
 
-            if v.detection_hints:
+            hints = getattr(v, 'detection_hints', [])
+            if hints:
                 lines.append("**Detection Hints:**")
-                for h in v.detection_hints:
+                for h in hints:
                     lines.append(f"- {h}")
                 lines.append("")
 
@@ -254,9 +257,12 @@ def vectors_to_html(
             if hasattr(v, "cve") and v.cve:
                 cve_badge = f'<span class="badge badge-cve">{v.cve}</span>'
 
-            prereqs = "".join(f"<li>{p}</li>" for p in v.prerequisites) if v.prerequisites else "<li>None</li>"
-            steps = "".join(f"<li>{s}</li>" for s in v.steps) if v.steps else "<li>None</li>"
-            detections = "".join(f"<li>{h}</li>" for h in v.detection_hints) if v.detection_hints else "<li>None</li>"
+            ps = getattr(v, 'prerequisites', None) or (getattr(v, 'required_capabilities', []) + getattr(v, 'required_conditions', []))
+            prereqs = "".join(f"<li>{p}</li>" for p in ps) if ps else "<li>None</li>"
+            html_steps = getattr(v, 'steps', [])
+            steps = "".join(f"<li>{s}</li>" for s in html_steps) if html_steps else "<li>None</li>"
+            html_hints = getattr(v, 'detection_hints', [])
+            detections = "".join(f"<li>{h}</li>" for h in html_hints) if html_hints else "<li>None</li>"
 
             refs = ""
             if hasattr(v, "references") and v.references:
