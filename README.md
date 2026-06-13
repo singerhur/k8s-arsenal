@@ -1,36 +1,71 @@
-# K8s Arsenal — 云原生攻击面分析工具
+# K8s Arsenal — 攻击图状态机模拟器
 
-基于「云原生攻击战术思路总纲」构建的 Kubernetes 安全评估工具，用于红蓝对抗中的攻击面枚举、信任链映射、攻击路径规划与技术编目。
+**Kubernetes Permission Causal Analysis Engine** — 从 RBAC 绑定构建攻击图，模拟身份迁移与能力组合，分析边因果性与最小割集，推断攻击语义标签。
+
+```
+AttackGraph = (G, S, T, Δ, MCS, Label)
+v0.4   Path reachability      — 攻击图基元（build_graph/reachable/shortest_path）
+v0.5   State evolution        — 身份流 + 能力集沿路径演化
+v0.5.1 T(S) terminal semantics — 三值终端状态：SAFE / PARTIAL / COMPROMISED
+v0.6   ΔT counterfactual      — 单边因果分析（移除一条边是否改变终端状态）
+v0.7   MCS minimal cut set     — 组合因果：打破所有攻击路径的最小边集合
+v0.8   AttackLabel classifier  — 语义投影：从 trace 推导 MITRE 战术标签
+v0.9   Architectural invariants — CI 门禁：18 个可执行设计约束
+```
 
 ## 设计理念
 
-不依赖漏洞利用，专注于**信任链劫持**——滥用 K8s 组件间固有信任关系，将恶意行为伪装在正常运维噪声基线内。
+**不依赖漏洞利用**，专注于**信任链劫持**——滥用 K8s 组件间固有信任关系。
 
-## 版本
+v0.4 以前是攻击面评估工具（编目 72 攻击向量 + 可执行剧本）。v0.5 起转型为**攻击图状态机**：不枚举所有漏洞，而是模拟「给定初始身份 + 一组信任边，系统最终会沦陷到什么程度」。
 
-| 版本 | 更新内容 |
-|------|----------|
-| **v0.4.0** | 🆕 **PlaybookExecutor 执行器** — 攻击检测→可执行命令；新增 stealth 隐蔽模式；Docker 镜像化部署；<br>🔧 `--dry-run` 预览模式；<br>🔧 `catalog --phase` 别名支持（escape/lateral/持久化等）；<br>🔧 靶场环境识别修复（中文指纹匹配）；<br>🔧 Pod 自检身份回退（SA token 文件）；<br>🔧 `nginx:alpine` → `k8s-arsenal-pod:latest`（国内镜像兼容）；<br>🔧 Dockerfile 内置 `docker.io` 包；<br>🔧 命令关键字匹配修复（`_VECTOR_ID_MAP` 直接 ID 映射，消除误/漏匹配）；<br>🔧 自检身份字段修复（`_build_report()` 重用解析结果，不再回退到环境变量） |
-| **v0.3.0** | 🆕 智能适应引擎 + 攻击向量优化器 + SmartAttackChain 加权评分排序 |
+- **因果性**：不是问"有没有路径"，而是问"为什么这个身份能到这里"
+- **可解释性**：每条攻击链都有完整的 identity_chain + capability_trace
+- **架构可验证**：18 个 invariants 配合 `pytest -m invariants` 自动拦截设计越界
+
+## 版本表
+
+| 版本 | 日期 | 关键变更 |
+|------|------|----------|
+| **v0.9.0** | 2026-06-13 | 🏛️ **Architectural Invariants** — 18 个可执行设计约束，`pytest -m invariants` CI 门禁 |
+| **v0.8.0** | 2026-06-13 | 🏷️ **AttackLabel 分类器** — 5 tactic（PE/LM/CA/P/Exec），CLUSTER_TAKEOVER 移除（是终态非战术） |
+| **v0.7.0** | 2026-06-13 | 🔪 **Minimal Cut Set** — 双轨 hitting-set（greedy+exact），发现最小断边集合 |
+| **v0.6.0** | 2026-06-13 | ⚡ **Counterfactual ΔT** — 单边因果核：移除一条边，终端状态是否改变？ |
+| **v0.5.1** | 2026-06-13 | 🎯 **T(S) 终端语义** — 三值决策：SAFE / PARTIAL / COMPROMISED |
+| **v0.5.0** | 2026-06-13 | 🔗 **State Evolution** — identity_flow + capability_set + evaluate_path |
+| **v0.4.x** | 2026-06-07 | 🎭 攻击面分析工具时代 — PlaybookExecutor、72 CVE 编目、Docker 镜像化 |
+| **v0.3.0** | 2026-06-06 | 智能适应引擎 + 攻击向量优化器 + SmartAttackChain |
+
+> 完整变更记录见 [CHANGELOG.md](CHANGELOG.md)
 
 ## 功能模块
 
-| 模块 | 功能 | 对应总纲章节 | 版本 |
-|------|------|-------------|------|
-| `recon` | K8s 环境探测、RBAC 分析、信任拓扑映射 | 五-1 绘制信任拓扑图 | v0.1.0 |
-| `core/engine` | **智能适应引擎** — 环境指纹识别、检测强度评估、攻击面评分 | 靶场专项优化 | v0.3.0 |
-| `core/optimizer` | **攻击向量优化器** — 4 维评分、阶段排序、最优序列生成 | 靶场专项优化 | v0.3.0 |
-| `escape` | 容器逃逸条件检测（hostPID/privileged/capabilities 等 12 项） | 一-3 逃逸与提权 | v0.1.0 |
-| `persistence` | 持久化技术编目（TokenRequest/Webhook/CronJob/内核级 8 项） | 一-4 持久化与隐身 | v0.2.0 |
-| `lateral` | 横向移动路径分析（Kubelet 证书/节点代理/Token 窃取 8 项） | 一-2 容器内代理 | v0.2.0 |
-| `network` | 网络攻击面分析（CoreDNS/CNI/ServiceMesh/iptables 8 项） | 二-1/8 劫持 CoreDNS/kube-proxy | v0.2.0 |
-| `cloud` | 云平台利用链（AWS IRSA、GCP Workload Identity、Azure IMDS） | 二-6 TokenRequest 云平台横向移动 | v0.2.0 |
-| `evasion` | 检测逃逸技术编目（审计绕过/日志混淆/Falco 绕过 9 项） | 一-5 清理痕迹 + 方法论 | v0.2.0 |
-| `playbook/chains` | 攻击剧本生成（组合攻击链/加权评分/SmartAttackChain 智能链） | 三/四 影子管理员与组合链 | v0.2.0 |
-| `playbook/executor` | **🆕 剧本执行器** — 将检测结果转化为可执行攻击命令，支持自动执行与隐蔽模式 | v0.4 新增 | **v0.4.0** |
-| `supply_chain` | 供应链攻击分析（Helm/镜像/Operator/GitOps 投毒 9 项） | 一-1 供应链投毒 | v0.2.0 |
-| `advanced` | 前沿 CVE 向量（runc/Docker/eBPF/containerd/Istio 等 18 项） | 逃逸补充 | v0.2.0 |
-| `utils` | Pod 内自检 / 多格式导出 / 性能监控与日志 | 工具集 | v0.2.0 |
+| 模块 | 功能 | 版本 |
+|------|------|------|
+| **🔷 攻击图状态机层 (v0.4–v0.9)** |||
+| `models.py` | **AttackGraph** 统一容器 — (G, S, T, Δ, MCS, Label) | v0.4.4 |
+| `runtime/identity_flow.py` | 身份沿路径传播 — 只在 TokenAccess/Impersonate 边上跃迁 | v0.5.0 |
+| `runtime/capability_set.py` | 能力沿路径累积 — resource/verb → token 映射 | v0.5.0 |
+| `runtime/evaluator.py` | **T(S) 终端状态** — SAFE / PARTIAL / COMPROMISED 三值决策 | v0.5.1 |
+| `runtime/counterfactual.py` | **ΔT 反事实核** — 单边因果分析 | v0.6.0 |
+| `runtime/minimal_cut.py` | **MCS 最小割集** — 组合因果 hitting-set | v0.7.0 |
+| `runtime/classifier.py` | **AttackLabel 语义投影** — 5 tactic 分类 | v0.8.0 |
+| `runtime/invariants.py` | **可执行设计约束** — 18 个 invariants, CI 门禁 | v0.9.0 |
+| **🔶 攻击面检测层 (v0.1–v0.4)** |||
+| `recon` | K8s 环境探测、RBAC 分析、信任拓扑映射 | v0.1.0 |
+| `core/engine` | 智能适应引擎 — 环境指纹识别、检测强度评估、攻击面评分 | v0.3.0 |
+| `core/optimizer` | 攻击向量优化器 — 4 维评分、阶段排序、最优序列生成 | v0.3.0 |
+| `escape` | 容器逃逸条件检测（hostPID/privileged/capabilities 等 12 项） | v0.1.0 |
+| `persistence` | 持久化技术编目（TokenRequest/Webhook/CronJob/内核级 8 项） | v0.2.0 |
+| `lateral` | 横向移动路径分析（Kubelet 证书/节点代理/Token 窃取 8 项） | v0.2.0 |
+| `network` | 网络攻击面分析（CoreDNS/CNI/ServiceMesh/iptables 8 项） | v0.2.0 |
+| `cloud` | 云平台利用链（AWS IRSA、GCP Workload Identity、Azure IMDS） | v0.2.0 |
+| `evasion` | 检测逃逸技术编目（审计绕过/日志混淆/Falco 绕过 9 项） | v0.2.0 |
+| `playbook/chains` | 攻击剧本生成（组合攻击链/加权评分/SmartAttackChain） | v0.2.0 |
+| `playbook/executor` | 剧本执行器 — 可执行攻击命令 + 隐蔽模式 | v0.4.0 |
+| `supply_chain` | 供应链攻击分析（Helm/镜像/Operator/GitOps 投毒 9 项） | v0.2.0 |
+| `advanced` | 前沿 CVE 向量（runc/Docker/eBPF/containerd/Istio 等 18 项） | v0.2.0 |
+| `utils` | Pod 内自检 / 多格式导出 / 性能监控与日志 | v0.2.0 |
 
 ## 安装
 
@@ -329,53 +364,60 @@ PlaybookExecutor v0.4.0 开发与优化过程中修复了以下 bug：
 ## 核心架构
 
 ```
-D:\5555555\
-├── Dockerfile                 # 🆕 Docker 镜像构建（python:3.11-slim）
+k8s_arsenal/
+├── Dockerfile                 # Docker 镜像构建（python:3.11-slim）
 ├── pyproject.toml             # 项目元数据与依赖
 ├── README.md                  # 本文档
+├── CHANGELOG.md               # 变更记录
 ├── k8s_arsenal/
-│   ├── __init__.py
-│   ├── models.py              # 核心数据模型（AttackVector, EscapeVector 等）
-│   ├── cli.py                 # CLI 入口（10 个命令）
-│   ├── core/
+│   ├── __init__.py            # 版本号 (v0.9.0)
+│   ├── models.py              # 核心数据模型（AttackGraph, TrustEdge 等）
+│   ├── cli.py                 # CLI 入口
+│   ├── runtime/               # 🔷 攻击图状态机层 (v0.5–v0.9)
+│   │   ├── __init__.py        # 36 exports
+│   │   ├── identity_flow.py   # 身份沿路径传播
+│   │   ├── capability_set.py  # 能力沿路径累积
+│   │   ├── evaluator.py       # T(S) 终端状态决策
+│   │   ├── counterfactual.py  # ΔT 单边因果分析
+│   │   ├── minimal_cut.py     # MCS 最小割集
+│   │   ├── classifier.py      # AttackLabel 语义投影
+│   │   └── invariants.py      # 18 个可执行设计约束
+│   ├── core/                  # 🔶 攻击面检测层 (v0.3)
 │   │   ├── engine.py          # 自适应战场评估（AdaptiveEngine）
 │   │   └── optimizer.py       # 攻击向量优化器（AttackVectorOptimizer）
-│   ├── recon/
+│   ├── recon/                 # 环境侦察
 │   │   ├── k8s_enum.py        # K8s 环境探测
 │   │   ├── trust_map.py       # 信任拓扑映射
 │   │   └── sa_analysis.py     # ServiceAccount 权限分析
-│   ├── escape/
-│   │   ├── detector.py        # 逃逸条件检测
-│   │   └── vectors.py         # 逃逸技术编目（12 项）
+│   ├── escape/detector.py     # 容器逃逸条件检测
 │   ├── persistence/           # 持久化（8 项）
 │   ├── lateral/               # 横向移动（8 项）
 │   ├── network/               # 网络攻击（8 项）
-│   ├── cloud/
-│   │   ├── base.py            # 云元数据服务基类
-│   │   ├── aws.py             # AWS EKS 利用链
-│   │   ├── gcp.py             # GCP GKE 利用链
-│   │   └── azure.py           # Azure AKS 利用链
+│   ├── cloud/                 # 云平台（AWS/GCP/Azure）
 │   ├── evasion/               # 检测逃逸（9 项）
 │   ├── playbook/
-│   │   ├── __init__.py        # 🆕 导出 PlaybookExecutor
-│   │   ├── templates.py       # 攻击链模板（6 个）
-│   │   ├── chains.py          # 攻击链组合引擎 + SmartAttackChain + 阈值配置
-│   │   └── executor.py        # 🆕 剧本执行器（playbook executor, 817 行）
+│   │   ├── chains.py          # 攻击链组合引擎
+│   │   └── executor.py        # 剧本执行器
 │   ├── supply_chain/          # 供应链攻击（9 项）
 │   ├── advanced/              # 前沿 CVE 向量（18 项）
-│   └── utils/
-│       ├── self_check.py      # Pod 内自检
-│       ├── export.py          # 多格式导出（JSON/MD/HTML）
-│       ├── cache.py           # 🆕 缓存系统（LRU+DiskCache）
-│       └── perf.py            # 🆕 性能监控与结构化日志
+│   └── utils/                 # 工具集
 └── tests/
-    ├── test_catalogs.py       # 21 条测试
-    ├── test_chains.py         # 20 条测试
-    ├── test_engine.py         # 18 条测试
-    ├── test_executor.py       # 🆕 30 条测试（executor 生成/编号/脚本/执行）
-    ├── test_models.py         # 8 条测试
-    ├── test_optimizer.py      # 19 条测试
-    └── test_smart_chain.py    # 19 条测试
+    ├── test_runtime.py        # 25 条 (identity/capability/eval/T(S))
+    ├── test_counterfactual.py # 20 条 (ΔT 因果核)
+    ├── test_minimal_cut.py    # 20 条 (MCS 割集)
+    ├── test_classifier.py     # 11 条 (AttackLabel/tactic)
+    ├── test_invariants.py     # 32 条 (pytest -m invariants)
+    ├── test_models.py         # 20 条 (AttackGraph/图基元)
+    ├── test_executor.py       # 30 条 (PlaybookExecutor)
+    ├── test_engine.py         # 18 条 (AdaptiveEngine)
+    ├── test_optimizer.py      # 19 条 (Optimizer)
+    ├── test_chains.py         # 20 条 (Chains)
+    ├── test_catalogs.py       # 21 条 (Catalog)
+    ├── test_smart_chain.py    # 19 条 (SmartChain)
+    ├── test_detector.py       # 19 条 (Detector)
+    ├── test_k8s_enum.py       # 19 条 (K8s enum)
+    ├── test_sa_analysis.py    # 15 条 (SA analysis)
+    └── test_trust_map.py      # 12 条 (Trust map)
 ```
 
 ## CLI 命令一览
@@ -406,10 +448,11 @@ D:\5555555\
 --output, -o PATH        保存到文件（.txt / .sh / .json）（v0.4.0）
 ```
 
-## 攻击向量统计
+## 攻击向量 & 分析模块统计
 
 | 类别 | 数量 |
 |------|------|
+| **🔷 攻击图状态机** (`runtime/`) | **9 模块** (models + 5 核心 + classifier + invariants) |
 | 容器逃逸 (`escape/vectors.py`) | 12 |
 | 持久化 (`persistence/`) | 8 |
 | 横向移动 (`lateral/`) | 8 |
@@ -417,26 +460,47 @@ D:\5555555\
 | 供应链攻击 (`supply_chain/`) | 9 |
 | 检测逃逸 (`evasion/`) | 9 |
 | 高级 CVE (`advanced/`) | 18 |
-| **总计** | **72** |
+| **攻击向量总计** | **72** |
 | 攻击剧本模板 | 6 |
+| **Invariants** | **18** |
+| **总 exports** | **36** (runtime/__init__.py) |
 
 ## 测试覆盖
 
-**总测试用例: 200**（v0.4.0 新增 19 条 SmartAttackChain + 30 条 PlaybookExecutor 测试 + 65 条新增测试模块）
+**总测试用例: 387**（384 passed, 3 skipped, 0 failed）— pytest 6.25s, 16ms/test
+
+### Attack Graph State Machine 测试 (v0.5–v0.9)
 
 | 测试文件 | 测试数 | 覆盖内容 |
 |---------|--------|----------|
-| `tests/test_executor.py` | **30** 🆕 | PlaybookExecutor 生成/编号/脚本导出/dry-run 执行 |
+| `tests/test_runtime.py` | 25 | identity_flow, capability_set, evaluate_path, evaluate_terminal_state |
+| `tests/test_counterfactual.py` | 20 | ΔT 反事实核: 4 结果类型, 终端状态转换, 图不变性 |
+| `tests/test_minimal_cut.py` | 20 | MCS: greedy/exact hitting-set, 割集正确性, 边数量边界 |
+| `tests/test_classifier.py` | 11 | AttackLabel: 5 tactic label, outcome 分离, 置信度 |
+| `tests/test_invariants.py` | 32 | 🏛️ invariants: 18 设计约束 (pytest -m invariants) |
+| `tests/test_models.py` | 20 | AttackGraph, TrustEdge, 图基元 (build_graph/reachable/shortest_path) |
+
+### Attack Surface Application 测试 (v0.1–v0.4)
+
+| 测试文件 | 测试数 | 覆盖内容 |
+|---------|--------|----------|
+| `tests/test_executor.py` | 30 | PlaybookExecutor: 生成/编号/脚本导出/dry-run |
 | `tests/test_smart_chain.py` | 19 | SmartAttackChain 智能链生成、反馈机制 |
 | `tests/test_optimizer.py` | 19 | AttackVectorOptimizer 评分排序、对比表 |
 | `tests/test_engine.py` | 18 | AdaptiveEngine 环境评估、攻击面评分 |
 | `tests/test_catalogs.py` | 21 | 技术编目、CLI 输出 |
 | `tests/test_chains.py` | 20 | AttackChainBuilder 链生成、模板匹配 |
-| `tests/test_models.py` | 8 | AttackVector、EscapeVector 数据模型 |
-| `tests/test_detector.py` | 19 🆕 | 逃逸条件评估、检测精度、风险评分全链路 |
-| `tests/test_k8s_enum.py` | 19 🆕 | 容器/K8s 环境探测、特权检测、能力枚举 |
-| `tests/test_sa_analysis.py` | 15 🆕 | ServiceAccount 权限风险评估、高危权限检测 |
-| `tests/test_trust_map.py` | 12 🆕 | 信任拓扑构建、可攻击边筛选、ASCII 渲染 |
+| `tests/test_detector.py` | 19 | 逃逸条件评估、检测精度、风险评分 |
+| `tests/test_k8s_enum.py` | 19 | 容器/K8s 环境探测、特权检测、能力枚举 |
+| `tests/test_sa_analysis.py` | 15 | ServiceAccount 权限风险评估 |
+| `tests/test_trust_map.py` | 12 | 信任拓扑构建、可攻击边筛选 |
+
+### CI Gate
+
+```bash
+pytest -m invariants   # 仅运行可执行设计约束 (32 tests)
+pytest                 # 全量 387 tests
+```
 
 ## 智能适应引擎 (v0.3.0)
 
