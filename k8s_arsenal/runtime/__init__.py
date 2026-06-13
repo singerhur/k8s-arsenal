@@ -15,6 +15,7 @@ from k8s_arsenal.runtime.capability_set import (
     update_capability,
 )
 from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
+from k8s_arsenal.runtime.counterfactual import counterfactual
 
 __all__ = [
     "IdentityState",
@@ -24,4 +25,5 @@ __all__ = [
     "is_compromised",
     "evaluate_path",
     "evaluate_terminal_state",
+    "counterfactual",
 ]
