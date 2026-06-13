@@ -1,0 +1,39 @@
+- rule: K8s Arsenal NSEnter Escape
+  desc: Detect nsenter escape from container
+  condition: spawned_process and proc.name = nsenter and proc.args contains -t
+  output: 'ALERT [CRITICAL] NSEnter Escape: user=%user.name container=%container.name
+    cmd=%proc.cmdline'
+  priority: CRITICAL
+  tags:
+  - k8s_arsenal
+  - escape
+  - nsenter
+- rule: K8s Arsenal Kubeconfig Access
+  desc: Detect read of admin kubeconfig
+  condition: open_read and fd.name = /etc/kubernetes/admin.conf
+  output: 'ALERT [CRITICAL] Kubeconfig Access: user=%user.name container=%container.name
+    cmd=%proc.cmdline'
+  priority: CRITICAL
+  tags:
+  - k8s_arsenal
+  - credential_access
+  - kubeconfig
+- rule: K8s Arsenal Cron Write
+  desc: Detect writing files to /etc/cron.d (host escape aware)
+  condition: open_write and fd.directory = /etc/cron.d
+  output: 'ALERT [CRITICAL] Cron Persistence: user=%user.name file=%fd.name cmd=%proc.cmdline'
+  priority: CRITICAL
+  tags:
+  - k8s_arsenal
+  - persistence
+  - cron
+- rule: K8s Arsenal SA Token Theft
+  desc: Detect reading SA tokens from host
+  condition: open_read and fd.name endswith /token and fd.name contains kube-api-access
+  output: 'ALERT [HIGH] SA Token Theft: user=%user.name container=%container.name
+    file=%fd.name'
+  priority: WARNING
+  tags:
+  - k8s_arsenal
+  - credential_access
+  - token

@@ -1,0 +1,77 @@
+﻿apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: detector
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: detector
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: detector
+subjects:
+- kind: ServiceAccount
+  name: detector
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: detector
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: detector
+  namespace: kube-system
+  labels:
+    app: detector
+spec:
+  selector:
+    matchLabels:
+      app: detector
+  template:
+    metadata:
+      labels:
+        app: detector
+    spec:
+      serviceAccountName: detector
+      hostPID: true
+      containers:
+      - name: detector
+        image: k8s-arsenal-pod:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/scripts/detector.py"]
+        securityContext:
+          privileged: true
+        env:
+        - name: HOST_ROOT
+          value: "/host"
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+          readOnly: true
+        - name: script
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+      - name: script
+        configMap:
+          name: detector-script
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - effect: NoExecute
+        operator: Exists

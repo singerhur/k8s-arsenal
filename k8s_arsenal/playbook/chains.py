@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from k8s_arsenal.models import (
     AttackVector, AttackPath, AttackPhase, RiskLevel,
+    TrustEdge, AttackGraph,
 )
 from k8s_arsenal.persistence.catalog import PERSISTENCE_VECTORS
 from k8s_arsenal.lateral.movement import LATERAL_VECTORS
@@ -391,3 +392,136 @@ def print_smart_chain_score(
             lines.append(f"  - {r}")
 
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------
+# 攻击图基元（graph primitives）
+# ------------------------------------------------------------------
+
+def build_graph(
+    trust_edges: list[TrustEdge],
+    attack_paths: Optional[list[AttackPath]] = None,
+    nodes: Optional[dict[str, str]] = None,
+) -> AttackGraph:
+    """从信任关系和攻击路径构建统一攻击图
+
+    Args:
+        trust_edges: 信任关系列表（来自 trust_map.build_trust_topology）
+        attack_paths: 攻击路径列表（可选，来自 AttackChainBuilder）
+        nodes: 节点名称映射（可选，node_id → node_label）
+
+    Returns:
+        统一的 AttackGraph 容器
+    """
+    graph = AttackGraph(
+        nodes=nodes or {},
+        edges=list(trust_edges),
+        paths=list(attack_paths) if attack_paths else [],
+    )
+
+    # 自动提取入口点：只作为 source 出现但不作为 target 的节点
+    sources = {e.source for e in trust_edges}
+    targets = {e.target for e in trust_edges}
+    graph.entry_points = sorted(sources - targets)
+
+    # 自动识别关键资产：只作为 target 但不作为 source 的节点
+    graph.critical_assets = sorted(targets - sources)
+
+    return graph
+
+
+def reachable(graph: AttackGraph, src: str, dst: str) -> bool:
+    """BFS 判断图中两节点是否可达
+
+    Args:
+        graph: 攻击图
+        src: 源节点 ID
+        dst: 目标节点 ID
+
+    Returns:
+        True 如果存在从 src 到 dst 的路径
+    """
+    if src == dst:
+        return True
+
+    adj: dict[str, list[str]] = {}
+    for e in graph.edges:
+        if e.source not in adj:
+            adj[e.source] = []
+        adj[e.source].append(e.target)
+
+    if src not in adj:
+        return False
+
+    visited = {src}
+    queue = [src]
+    while queue:
+        current = queue.pop(0)
+        for neighbor in adj.get(current, []):
+            if neighbor == dst:
+                return True
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+
+    return False
+
+
+def shortest_path(
+    graph: AttackGraph,
+    src: str,
+    dst: str,
+) -> Optional[list[str]]:
+    """BFS 寻找最短可达路径
+
+    Args:
+        graph: 攻击图
+        src: 源节点 ID
+        dst: 目标节点 ID
+
+    Returns:
+        节点 ID 列表（最短路径），或 None（不可达）
+    """
+    if src == dst:
+        return [src]
+
+    adj: dict[str, list[str]] = {}
+    for e in graph.edges:
+        if e.source not in adj:
+            adj[e.source] = []
+        adj[e.source].append(e.target)
+
+    if src not in adj:
+        return None
+
+    visited = {src}
+    queue: list[list[str]] = [[src]]
+    while queue:
+        path = queue.pop(0)
+        current = path[-1]
+        for neighbor in adj.get(current, []):
+            if neighbor == dst:
+                return path + [neighbor]
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(path + [neighbor])
+
+    return None
+
+
+def find_pivot_points(graph: AttackGraph) -> list[tuple[str, int]]:
+    """找出枢纽节点（出度 >= 2 的关键跳板节点）
+
+    Args:
+        graph: 攻击图
+
+    Returns:
+        排序后的 (node_id, out_degree) 列表，按出度降序
+    """
+    degree: dict[str, int] = {}
+    for e in graph.edges:
+        degree[e.source] = degree.get(e.source, 0) + 1
+
+    pivots = [(node, d) for node, d in degree.items() if d >= 2]
+    pivots.sort(key=lambda x: x[1], reverse=True)
+    return pivots

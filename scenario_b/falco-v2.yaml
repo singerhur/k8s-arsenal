@@ -1,0 +1,59 @@
+﻿apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: kube-system
+  labels:
+    app: falco
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      serviceAccountName: falco
+      hostPID: true
+      containers:
+      - name: falco
+        image: falcosecurity/falco:0.39.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        args:
+        - /usr/bin/falco
+        - --bpf
+        - -o
+        - json_output=true
+        - -o
+        - json_include_output_property=true
+        - -o
+        - log_stderr=true
+        - -o
+        - log_level=info
+        - -r
+        - /etc/falco/k8s-arsenal-rules.yaml
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+          readOnly: true
+        - name: falco-rules
+          mountPath: /etc/falco/k8s-arsenal-rules.yaml
+          subPath: k8s-arsenal-rules.yaml
+          readOnly: true
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+      - name: falco-rules
+        configMap:
+          name: falco-rules
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - effect: NoExecute
+        operator: Exists

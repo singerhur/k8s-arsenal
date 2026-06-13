@@ -81,6 +81,20 @@ class AttackPath:
 
 
 @dataclass
+class AttackGraph:
+    """攻击图（语义统一容器）
+
+    统一承载信任关系边、攻击路径、环境节点等关键语义对象，
+    提供遍历和查询的统一入口。
+    """
+    nodes: dict[str, str] = field(default_factory=dict)
+    edges: list[TrustEdge] = field(default_factory=list)
+    paths: list[AttackPath] = field(default_factory=list)
+    entry_points: list[str] = field(default_factory=list)
+    critical_assets: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SAResult:
     """ServiceAccount 权限分析结果"""
     name: str

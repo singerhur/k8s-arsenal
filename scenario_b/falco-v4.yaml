@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: falco
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: falco
+  namespace: falco
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: falco
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - nodes
+  - pods
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: falco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: falco
+subjects:
+- kind: ServiceAccount
+  name: falco
+  namespace: falco
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+  namespace: falco
+data:
+  falco.yaml: "log_level: info\nstdout_output:\n  enabled: true\ntime_format_iso_8601:\
+    \ true\nengine:\n  kind: modern_ebpf\nrules_files:\n  - /etc/falco/falco_rules.yaml\n\
+    \  - /etc/falco/k8s-arsenal-rules.yaml\n"
+  k8s-arsenal-rules.yaml: "- rule: NSEnter Escape\n  desc: Detect nsenter escape from\
+    \ container\n  condition: >\n    spawned_process\n    and proc.name = \"nsenter\"\
+    \n    and proc.args contains \"-t\"\n    and container\n  output: \"ALERT [CRITICAL]\
+    \ NSEnter Escape: user=%user.name container=%container.name cmd=%proc.cmdline\"\
+    \n  priority: CRITICAL\n  tags: [k8s_arsenal, escape, nsenter]\n\n- rule: Kubeconfig\
+    \ Access\n  desc: Detect read of admin kubeconfig\n  condition: >\n    open_read\n\
+    \    and fd.name = \"/etc/kubernetes/admin.conf\"\n    and container\n  output:\
+    \ \"ALERT [CRITICAL] Kubeconfig Access: user=%user.name container=%container.name\
+    \ cmd=%proc.cmdline\"\n  priority: CRITICAL\n  tags: [k8s_arsenal, credential_access,\
+    \ kubeconfig]\n\n- rule: Cron Directory Write\n  desc: Detect writing files to\
+    \ /etc/cron.d\n  condition: >\n    open_write\n    and fd.directory = \"/etc/cron.d\"\
+    \n    and container\n  output: \"ALERT [CRITICAL] Cron Persistence: user=%user.name\
+    \ container=%container.name file=%fd.name cmd=%proc.cmdline\"\n  priority: CRITICAL\n\
+    \  tags: [k8s_arsenal, persistence, cron]\n\n- rule: SA Token Theft\n  desc: Detect\
+    \ reading SA tokens from host filesystem\n  condition: >\n    open_read\n    and\
+    \ fd.name endswith \"/token\"\n    and fd.name contains \"kube-api-access\"\n\
+    \    and container\n  output: \"ALERT [HIGH] SA Token Theft: user=%user.name container=%container.name\
+    \ file=%fd.name\"\n  priority: WARNING\n  tags: [k8s_arsenal, credential_access,\
+    \ token]\n"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: falco
+  labels:
+    app: falco
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      serviceAccountName: falco
+      hostPID: true
+      containers:
+      - name: falco
+        image: falcosecurity/falco-no-driver:0.39.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        args:
+        - /usr/bin/falco
+        volumeMounts:
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: host-dev
+          mountPath: /host/dev
+        - name: host-boot
+          mountPath: /host/boot
+          readOnly: true
+        - name: host-lib-modules
+          mountPath: /host/lib/modules
+          readOnly: true
+        - name: host-usr
+          mountPath: /host/usr
+          readOnly: true
+        - name: host-root
+          mountPath: /host
+          readOnly: true
+        - name: falco-config
+          mountPath: /etc/falco/falco.yaml
+          subPath: falco.yaml
+        - name: k8s-arsenal-rules
+          mountPath: /etc/falco/k8s-arsenal-rules.yaml
+          subPath: k8s-arsenal-rules.yaml
+      terminationGracePeriodSeconds: 5
+      volumes:
+      - name: host-proc
+        hostPath:
+          path: /proc
+      - name: host-dev
+        hostPath:
+          path: /dev
+      - name: host-boot
+        hostPath:
+          path: /boot
+      - name: host-lib-modules
+        hostPath:
+          path: /lib/modules
+      - name: host-usr
+        hostPath:
+          path: /usr
+      - name: host-root
+        hostPath:
+          path: /
+      - name: falco-config
+        configMap:
+          name: falco-config
+      - name: k8s-arsenal-rules
+        configMap:
+          name: falco-config
+---

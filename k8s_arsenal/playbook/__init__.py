@@ -9,9 +9,19 @@ from k8s_arsenal.playbook.executor import (
     PlaybookExecution,
     ExecutableStep,
 )
+from k8s_arsenal.playbook.chains import (
+    build_graph,
+    reachable,
+    shortest_path,
+    find_pivot_points,
+)
 
 __all__ = [
     "PlaybookExecutor",
     "PlaybookExecution",
     "ExecutableStep",
+    "build_graph",
+    "reachable",
+    "shortest_path",
+    "find_pivot_points",
 ]

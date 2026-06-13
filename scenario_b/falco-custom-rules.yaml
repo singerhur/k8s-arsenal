@@ -1,0 +1,64 @@
+﻿- rule: K8s Arsenal NSEnter Escape
+  desc: Detect nsenter escape from container with pid=1 target
+  condition: >
+    spawned_process and proc.name = "nsenter"
+    and proc.args contains "-t" and proc.args contains "1"
+    and container
+  output: "[FALCO-ALERT] NSEnter Escape: %proc.cmdline (user=%user.name container=%container.name)"
+  priority: CRITICAL
+  tags: [k8s_arsenal, escape, nsenter]
+
+- rule: K8s Arsenal Admin Kubeconfig Access
+  desc: Detect access to /etc/kubernetes/admin.conf
+  condition: >
+    (open_read or open_write) and fd.name = "/etc/kubernetes/admin.conf"
+    and container
+  output: "[FALCO-ALERT] Kubeconfig Access: %proc.cmdline (user=%user.name container=%container.name fd=%fd.name)"
+  priority: CRITICAL
+  tags: [k8s_arsenal, credential_access, kubeconfig]
+
+- rule: K8s Arsenal Crontab Write
+  desc: Detect writing to /etc/cron.d/
+  condition: >
+    (open_write or create) and fd.directory = "/etc/cron.d"
+    and container
+  output: "[FALCO-ALERT] Cron Persistence: %proc.cmdline writing to %fd.name (user=%user.name container=%container.name)"
+  priority: CRITICAL
+  tags: [k8s_arsenal, persistence, cron]
+
+- rule: K8s Arsenal Kubelet Cert Access
+  desc: Detect access to kubelet TLS certificates
+  condition: >
+    (open_read or open_write) and fd.name startswith "/var/lib/kubelet/pki/"
+    and container
+  output: "[FALCO-ALERT] Kubelet Cert Access: %proc.cmdline (user=%user.name fd=%fd.name)"
+  priority: HIGH
+  tags: [k8s_arsenal, credential_access, kubelet]
+
+- rule: K8s Arsenal SA Token Theft
+  desc: Detect reading service account tokens from host filesystem
+  condition: >
+    open_read and fd.name endswith "/token"
+    and fd.name contains "kube-api-access"
+    and container
+  output: "[FALCO-ALERT] SA Token Theft: %proc.cmdline (user=%user.name fd=%fd.name)"
+  priority: HIGH
+  tags: [k8s_arsenal, credential_access, token]
+
+- rule: K8s Arsenal Privileged Pod Created
+  desc: Detect privileged container creation (K8s audit)
+  condition: >
+    evt.type = k8s and ka.req.pod.containers.privileged exists
+    and ka.req.pod.containers.privileged = true
+  output: "[FALCO-ALERT] Privileged Pod: %ka.req.pod.name ns=%ka.target.namespace image=%ka.req.pod.containers.image"
+  priority: CRITICAL
+  tags: [k8s_arsenal, privileged, pod]
+
+- rule: K8s Arsenal HostPID Pod
+  desc: Detect pod with hostPID=true
+  condition: >
+    evt.type = k8s and ka.req.pod.host_pid exists
+    and ka.req.pod.host_pid = true
+  output: "[FALCO-ALERT] HostPID Pod: %ka.req.pod.name ns=%ka.target.namespace"
+  priority: CRITICAL
+  tags: [k8s_arsenal, host_pid, pod]

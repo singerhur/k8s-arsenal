@@ -1,0 +1,112 @@
+﻿apiVersion: v1
+kind: Namespace
+metadata:
+  name: falco
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-rules
+  namespace: falco
+data:
+  k8s-arsenal-rules.yaml: |
+    - rule: K8s Arsenal NSEnter Escape
+      desc: Detect nsenter escape from container
+      condition: >
+        spawned_process and proc.name = "nsenter"
+        and proc.args contains "-t" and proc.args contains "1"
+        and container
+      output: "[FALCO-ALERT] NSEnter Escape: cmdline=%proc.cmdline user=%user.name container=%container.name"
+      priority: CRITICAL
+      tags: [k8s_arsenal, escape, nsenter]
+
+    - rule: K8s Arsenal Admin Kubeconfig Access
+      desc: Detect read access to admin kubeconfig
+      condition: >
+        (open_read or open_write) and fd.name = "/etc/kubernetes/admin.conf"
+        and container
+      output: "[FALCO-ALERT] Kubeconfig Access: proc=%proc.name cmd=%proc.cmdline container=%container.name fd=%fd.name"
+      priority: CRITICAL
+      tags: [k8s_arsenal, credential_access, kubeconfig]
+
+    - rule: K8s Arsenal Crontab Write
+      desc: Detect write to /etc/cron.d
+      condition: >
+        (open_write or create or write) and fd.directory = "/etc/cron.d"
+        and container
+      output: "[FALCO-ALERT] Cron Persistence: proc=%proc.name cmd=%proc.cmdline file=%fd.name container=%container.name"
+      priority: CRITICAL
+      tags: [k8s_arsenal, persistence, cron]
+
+    - rule: K8s Arsenal Kubelet Cert Access
+      desc: Detect access to kubelet TLS certs
+      condition: >
+        (open_read or open_write) and fd.name startswith "/var/lib/kubelet/pki/"
+        and container
+      output: "[FALCO-ALERT] Kubelet Cert Access: proc=%proc.cmdline user=%user.name fd=%fd.name"
+      priority: HIGH
+      tags: [k8s_arsenal, credential_access, kubelet]
+
+    - rule: K8s Arsenal SA Token Theft
+      desc: Detect reading SA tokens from host filesystem
+      condition: >
+        open_read and fd.name endswith "/token"
+        and fd.name contains "kube-api-access"
+        and container
+      output: "[FALCO-ALERT] SA Token Theft: proc=%proc.name cmd=%proc.cmdline user=%user.name fd=%fd.name"
+      priority: HIGH
+      tags: [k8s_arsenal, credential_access, token]
+
+  falco.yaml: |
+    stdout_output:
+      enabled: true
+    log_level: info
+    rules_file:
+      - /etc/falco/falco_rules.yaml
+      - /etc/falco/k8s-arsenal-rules.yaml
+    engine:
+      kind: modern_ebpf
+    modern_ebpf:
+      buf_size_preset: 4
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: falco
+  labels:
+    app: falco
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      hostPID: true
+      containers:
+      - name: falco
+        image: falcosecurity/falco-no-driver:0.39.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        args:
+          - /usr/bin/falco
+        volumeMounts:
+        - name: rules-volume
+          mountPath: /etc/falco/k8s-arsenal-rules.yaml
+          subPath: k8s-arsenal-rules.yaml
+        - name: falco-config
+          mountPath: /etc/falco/falco.yaml
+          subPath: falco.yaml
+      volumes:
+      - name: rules-volume
+        configMap:
+          name: falco-rules
+      - name: falco-config
+        configMap:
+          name: falco-rules
