@@ -18,6 +18,26 @@ from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
 from k8s_arsenal.runtime.counterfactual import counterfactual
 from k8s_arsenal.runtime.minimal_cut import greedy_minimal_cut, minimal_cut_set
 from k8s_arsenal.runtime.classifier import AttackLabel, classify, infer_tactic
+from k8s_arsenal.runtime.invariants import (
+    assert_attack_label_dimensions_separated,
+    assert_capability_is_atomic,
+    assert_capability_set_monotonic,
+    assert_classify_produces_valid_label,
+    assert_confidence_in_range,
+    assert_counterfactual_no_mutation,
+    assert_counterfactual_result_structure,
+    assert_evaluate_path_result_structure,
+    assert_identity_chain_grows_monotonically,
+    assert_identity_chain_non_empty,
+    assert_identity_only_changes_on_defined_edges,
+    assert_mcs_exact_not_larger_than_greedy,
+    assert_mcs_result_structure,
+    assert_reachable_returns_bool,
+    assert_shortest_path_valid,
+    assert_tactic_label_valid,
+    assert_terminal_state_valid,
+    validate_trace_result,
+)
 
 __all__ = [
     "IdentityState",
@@ -33,4 +53,23 @@ __all__ = [
     "AttackLabel",
     "classify",
     "infer_tactic",
+    # v0.9 invariants
+    "assert_attack_label_dimensions_separated",
+    "assert_capability_is_atomic",
+    "assert_capability_set_monotonic",
+    "assert_classify_produces_valid_label",
+    "assert_confidence_in_range",
+    "assert_counterfactual_no_mutation",
+    "assert_counterfactual_result_structure",
+    "assert_evaluate_path_result_structure",
+    "assert_identity_chain_grows_monotonically",
+    "assert_identity_chain_non_empty",
+    "assert_identity_only_changes_on_defined_edges",
+    "assert_mcs_exact_not_larger_than_greedy",
+    "assert_mcs_result_structure",
+    "assert_reachable_returns_bool",
+    "assert_shortest_path_valid",
+    "assert_tactic_label_valid",
+    "assert_terminal_state_valid",
+    "validate_trace_result",
 ]
