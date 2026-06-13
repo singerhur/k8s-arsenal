@@ -49,6 +49,8 @@ _CAPABILITY_MAP: dict[str, str] = {
     "clusterrolebindings/create": "grant_rbac",
     "roles/create": "grant_rbac",
     "clusterroles/create": "grant_rbac",
+    "clusterroles/escalate": "escalate_rbac",
+    "roles/escalate": "escalate_rbac",
 }
 
 
