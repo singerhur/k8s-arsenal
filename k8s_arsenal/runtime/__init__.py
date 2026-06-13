@@ -16,6 +16,7 @@ from k8s_arsenal.runtime.capability_set import (
 )
 from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
 from k8s_arsenal.runtime.counterfactual import counterfactual
+from k8s_arsenal.runtime.minimal_cut import greedy_minimal_cut, minimal_cut_set
 
 __all__ = [
     "IdentityState",
@@ -26,4 +27,6 @@ __all__ = [
     "evaluate_path",
     "evaluate_terminal_state",
     "counterfactual",
+    "greedy_minimal_cut",
+    "minimal_cut_set",
 ]
