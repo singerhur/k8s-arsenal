@@ -102,6 +102,20 @@ class AttackPath:
 
 
 @dataclass
+class PathEvaluationResult:
+    """路径执行评估结果（v0.5 runtime 层）
+
+    将 AttackGraph 路径（节点列表）转换为状态演化追踪，
+    回答：攻击者现在是谁、累积了什么能力、是否构成集群失陷。
+    """
+    final_identity: str
+    identity_chain: list[str]
+    capabilities: set[str]
+    trace: list[dict]
+    is_compromised: bool
+
+
+@dataclass
 class AttackGraph:
     """攻击图（语义统一容器）
 
