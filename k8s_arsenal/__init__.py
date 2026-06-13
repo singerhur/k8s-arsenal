@@ -15,6 +15,6 @@
     supply_chain - 供应链：Helm/镜像/Operator 投毒分析
 """
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 __author__ = "QClaw Security Lab"
 __description__ = "Kubernetes Attack Surface Analyzer & Red Team Playbook"

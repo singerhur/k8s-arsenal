@@ -1,21 +1,22 @@
-"""Integration tests for v0.5 runtime layer — path evaluation + Scenario C replay.
+"""Integration tests for v0.5.1 runtime layer — path evaluation + Scenario C replay.
 
 Tests cover:
-- Path → state evolution trace
+- Path → state evolution trace with terminal state classification
 - BFS shortest path evaluation (simple identity chain)
 - Full multi-hop chain with cumulative capability composition
-- Edge cases: empty capabilities, non-transition paths
+- T(S) three-way classification: SAFE / PARTIAL / COMPROMISED
+- Edge cases: empty capabilities, non-transition paths, custom thresholds
 """
 
 import pytest
 
-from k8s_arsenal.models import AttackGraph, RiskLevel, TrustEdge
+from k8s_arsenal.models import AttackGraph, AttackTerminalState, RiskLevel, TrustEdge
 from k8s_arsenal.playbook.chains import build_graph, shortest_path
 from k8s_arsenal.runtime import (
     CapabilityState,
     IdentityState,
     evaluate_path,
-    is_compromised,
+    evaluate_terminal_state,
     propagate_identity,
     update_capability,
 )
@@ -55,13 +56,7 @@ def _set_graph_meta(graph: AttackGraph, entry_points: list[str], critical_assets
 
 
 def _scenario_c_graph():
-    """Scenario C graph: 7 nodes, 7 edges, multi-hop identity chain.
-
-    ci-pipeline-sa → ci-deployer → prod-app-sa → monitoring-reader
-        → monitoring-operator-sa → kubelet-impersonator → kube-apiserver
-
-    Plus a direct DEFAULT edge: prod-app-sa → kube-apiserver
-    """
+    """Scenario C graph: 7 nodes, 7 edges, multi-hop identity chain."""
     edges = [
         # Edge 1: ci-pipeline-sa → ci-deployer (observation: RoleBinding)
         TrustEdge(
@@ -76,7 +71,7 @@ def _scenario_c_graph():
                 ],
             },
         ),
-        # Edge 4 (bridge): ci-deployer → prod-app-sa (inference: can deploy → identity theft)
+        # Edge 4: ci-deployer → prod-app-sa (inference: can deploy → identity theft)
         TrustEdge(
             source="ci-deployer",
             target="prod-app-sa",
@@ -103,7 +98,7 @@ def _scenario_c_graph():
                 ],
             },
         ),
-        # Edge 5 (bridge): monitoring-reader → monitoring-operator-sa (inference: token theft)
+        # Edge 5: monitoring-reader → monitoring-operator-sa (inference: token theft)
         TrustEdge(
             source="monitoring-reader",
             target="monitoring-operator-sa",
@@ -117,7 +112,7 @@ def _scenario_c_graph():
                 "reasoning": "monitoring-reader can read monitoring-operator-sa token",
             },
         ),
-        # Edge 3: monitoring-operator-sa → kubelet-impersonator (observation: ClusterRoleBinding)
+        # Edge 3: monitoring-operator-sa → kubelet-impersonator
         TrustEdge(
             source="monitoring-operator-sa",
             target="kubelet-impersonator",
@@ -130,7 +125,7 @@ def _scenario_c_graph():
                 ],
             },
         ),
-        # Edge 7 (bridge): kubelet-impersonator → kube-apiserver (inference: impersonate→kubelet)
+        # Edge 7: kubelet-impersonator → kube-apiserver
         TrustEdge(
             source="kubelet-impersonator",
             target="kube-apiserver",
@@ -141,7 +136,7 @@ def _scenario_c_graph():
                 "source": "inference",
                 "derived_from": ["monitoring-operator-sa->kubelet-impersonator"],
                 "capability": {"verbs": ["impersonate"], "resources": ["users"]},
-                "reasoning": "kubelet-impersonator can impersonate system:node:* → kubelet access",
+                "reasoning": "kubelet-impersonator can impersonate system:node:*",
             },
         ),
         # Edge 6: prod-app-sa → kube-apiserver (default: SA Token → API access)
@@ -178,7 +173,7 @@ def _scenario_c_graph():
 # ============================================================================
 
 def test_evaluate_simple_path():
-    """Basic two-hop path with capability accumulation."""
+    """Basic two-hop path with capability accumulation → PARTIAL (has dangerous cap)."""
     graph = _graph_with_capability()
     path = shortest_path(graph, "sa-A", "sa-B")
 
@@ -187,8 +182,8 @@ def test_evaluate_simple_path():
     assert result["final_identity"] == "sa-B"
     assert len(result["identity_chain"]) == 2  # sa-A -> sa-B (only transition edges grow chain)
     assert "create_pod" in result["capabilities"]
-    # Only create_pod — not enough for compromise
-    assert result["is_compromised"] is False
+    # create_pod is dangerous + at terminal node sa-B → PARTIAL
+    assert result["terminal_state"] == AttackTerminalState.PARTIAL
 
 
 def test_evaluate_path_trace():
@@ -229,13 +224,14 @@ def test_evaluate_path_identity_preserved_on_non_transition():
     assert result["final_identity"] == "sa-X"  # Never changed
     assert result["identity_chain"][-1] == "sa-X"
     assert result["capabilities"] == set()
-    assert result["is_compromised"] is False
+    # Empty capabilities, at terminal node sa-Z → SAFE
+    assert result["terminal_state"] == AttackTerminalState.SAFE
 
 
 def test_evaluate_path_raises_on_single_node():
     """Single node path raises ValueError."""
     graph = build_graph([])
-    with pytest.raises(ValueError, match="≥2 nodes"):
+    with pytest.raises(ValueError, match="\u22652 nodes"):
         evaluate_path(graph, ["only-node"])
 
 
@@ -255,24 +251,21 @@ def test_scenario_c_shortest_path():
         "ci-deployer",
         "prod-app-sa",
         "kube-apiserver",
-    ], f"BFS should find ≤3-hop path, got {path}"
+    ], f"BFS should find \u22643-hop path, got {path}"
 
 
 def test_scenario_c_shortest_path_evaluation():
-    """Short path: identity transitions from ci-pipeline-sa to prod-app-sa, but not compromised."""
+    """Short path: identity → prod-app-sa at kube-apiserver with create_pod → PARTIAL."""
     graph = _scenario_c_graph()
     path = shortest_path(graph, "ci-pipeline-sa", "kube-apiserver")
 
     result = evaluate_path(graph, path)
 
-    # Identity chain: ci-pipeline-sa → ci-pipeline-sa → prod-app-sa → prod-app-sa
     assert result["final_identity"] == "prod-app-sa"
     assert "prod-app-sa" in result["identity_chain"]
-
-    # Capabilities: create_pod from ci-deployer, nothing else
     assert "create_pod" in result["capabilities"]
-    # Only create_pod — no exec/read_secret, not compromised
-    assert result["is_compromised"] is False
+    # At kube-apiserver (critical asset) with create_pod → PARTIAL
+    assert result["terminal_state"] == AttackTerminalState.PARTIAL
 
 
 # ============================================================================
@@ -299,8 +292,8 @@ def test_scenario_c_full_identity_chain():
     assert result["identity_chain"] == [
         "ci-pipeline-sa",
         "prod-app-sa",            # TokenAccess (ci-deployer -> prod-app-sa)
-        "monitoring-operator-sa",  # TokenAccess (monitoring-reader -> monitoring-operator-sa)
-        "kube-apiserver",          # Impersonate (kubelet-impersonator -> kube-apiserver)
+        "monitoring-operator-sa",  # TokenAccess (monitoring-reader -> operator-sa)
+        "kube-apiserver",          # Impersonate (kubelet-impersonator -> api)
     ], f"identity_chain mismatch: {result['identity_chain']}"
 
 
@@ -315,19 +308,16 @@ def test_scenario_c_full_capability_composition():
     assert "impersonate" in caps, f"Expected impersonate from users/impersonate"
 
 
-def test_scenario_c_full_is_compromised():
-    """Full capability set (create + get + impersonate) → cluster compromised."""
+def test_scenario_c_full_terminal_state():
+    """Full capability set with impersonate → COMPROMISED (universal hard signal)."""
     graph = _scenario_c_graph()
     result = evaluate_path(graph, _SCENE_C_FULL_PATH)
 
-    # Standard threshold needs create + exec + read_secret
-    # We have create + read_secret + impersonate (no exec_pod)
-    assert result["is_compromised"] is False, (
-        "Standard threshold: create_pod+exec_pod+read_secret — missing exec_pod"
+    # impersonate is a universal hard-compromise signal —
+    # can impersonate kubelet → cluster-wide root
+    assert result["terminal_state"] == AttackTerminalState.COMPROMISED, (
+        f"Expected COMPROMISED (has impersonate), got {result['terminal_state']}"
     )
-
-    # Impersonate threshold: any impersonate is a compromise
-    assert is_compromised(CapabilityState(result["capabilities"]), "any_impersonate") is True
 
 
 def test_scenario_c_full_trace():
@@ -338,13 +328,8 @@ def test_scenario_c_full_trace():
     trace = result["trace"]
     assert len(trace) == 6  # 6 edges for 7 nodes
 
-    # Step 3 (prod-app-sa → monitoring-reader): identity is prod-app-sa
     assert trace[2]["identity"] == "prod-app-sa"
-
-    # Step 5 (monitoring-operator-sa → kubelet-impersonator): identity is monitoring-operator-sa
     assert trace[4]["identity"] == "monitoring-operator-sa"
-
-    # Last step: identity is kube-apiserver
     assert trace[5]["identity"] == "kube-apiserver"
 
 
@@ -353,7 +338,7 @@ def test_scenario_c_full_trace():
 # ============================================================================
 
 def test_empty_capability_path():
-    """Path with no capability-bearing edges returns empty capabilities."""
+    """Path with no capability-bearing edges → SAFE (no dangerous caps)."""
     edges = [
         TrustEdge(
             source="A", target="B", relationship="DefaultEdge",
@@ -365,14 +350,102 @@ def test_empty_capability_path():
 
     result = evaluate_path(graph, path)
     assert result["capabilities"] == set()
-    assert result["is_compromised"] is False
+    assert result["terminal_state"] == AttackTerminalState.SAFE
 
 
-def test_custom_threshold():
-    """Compromise check can use non-default thresholds."""
+def test_custom_threshold_rbac_escalation():
+    """rbac_escalation threshold with create_pod only → PARTIAL (at critical asset)."""
     graph = _scenario_c_graph()
 
-    # Use rbac_escalation threshold: needs create_pod + grant_rbac
     result = evaluate_path(graph, _SCENE_C_FULL_PATH, compromise_threshold="rbac_escalation")
-    # We have create_pod but not grant_rbac
-    assert result["is_compromised"] is False
+    # impersonate is a universal hard signal, so this is still COMPROMISED
+    # regardless of threshold
+    assert result["terminal_state"] == AttackTerminalState.COMPROMISED
+
+
+def test_custom_threshold_standard_no_exec():
+    """Standard threshold without exec_pod: impersonate still triggers COMPROMISED."""
+    graph = _scenario_c_graph()
+    result = evaluate_path(graph, _SCENE_C_FULL_PATH, compromise_threshold="standard")
+    # impersonate is universal hard signal → COMPROMISED
+    assert result["terminal_state"] == AttackTerminalState.COMPROMISED
+
+
+# ============================================================================
+# Terminal State Function: Direct Tests
+# ============================================================================
+
+def test_terminal_state_safe():
+    """Empty capabilities → SAFE."""
+    graph = build_graph([], nodes={"x": "x"})
+    identity = IdentityState(node="x")
+    result = evaluate_terminal_state(identity, frozenset(), graph)
+    assert result == AttackTerminalState.SAFE
+
+
+def test_terminal_state_partial_reachable():
+    """Has dangerous cap + reachable to critical asset → PARTIAL."""
+    graph = _scenario_c_graph()
+    identity = IdentityState(node="ci-pipeline-sa")
+    caps = frozenset({"create_pod"})
+    result = evaluate_terminal_state(identity, caps, graph)
+    assert result == AttackTerminalState.PARTIAL
+
+
+def test_terminal_state_compromised_impersonate():
+    """Impersonate → COMPROMISED (universal hard signal)."""
+    graph = build_graph([], nodes={"x": "x"})
+    identity = IdentityState(node="x")
+    caps = frozenset({"impersonate"})
+    result = evaluate_terminal_state(identity, caps, graph)
+    assert result == AttackTerminalState.COMPROMISED
+
+
+def test_terminal_state_compromised_escalate_rbac():
+    """escalate_rbac → COMPROMISED (universal hard signal)."""
+    graph = build_graph([], nodes={"x": "x"})
+    identity = IdentityState(node="x")
+    caps = frozenset({"escalate_rbac"})
+    result = evaluate_terminal_state(identity, caps, graph)
+    assert result == AttackTerminalState.COMPROMISED
+
+
+def test_terminal_state_compromised_standard():
+    """create_pod + exec_pod + read_secret → COMPROMISED (threshold met)."""
+    graph = build_graph([], nodes={"x": "x"})
+    identity = IdentityState(node="x")
+    caps = frozenset({"create_pod", "exec_pod", "read_secret"})
+    result = evaluate_terminal_state(identity, caps, graph)
+    assert result == AttackTerminalState.COMPROMISED
+
+
+def test_terminal_state_partial_at_critical():
+    """At critical asset with dangerous caps but no full threshold → PARTIAL."""
+    graph = build_graph([], nodes={"api": "api"})
+    _set_graph_meta(graph, [], ["api"])
+    identity = IdentityState(node="api")
+    caps = frozenset({"create_pod"})
+    result = evaluate_terminal_state(identity, caps, graph)
+    assert result == AttackTerminalState.PARTIAL
+
+
+def test_terminal_state_host_threshold():
+    """host_access → COMPROMISED (host threshold)."""
+    graph = build_graph([], nodes={"x": "x"})
+    identity = IdentityState(node="x")
+    caps = frozenset({"host_access"})
+    result = evaluate_terminal_state(identity, caps, graph, threshold="host")
+    assert result == AttackTerminalState.COMPROMISED
+
+
+def test_scenario_c_replay_terminal_state():
+    """Scenario C full chain: evaluate_path → terminal_state via T(S)."""
+    graph = _scenario_c_graph()
+    result = evaluate_path(graph, _SCENE_C_FULL_PATH)
+    assert result["terminal_state"] == AttackTerminalState.COMPROMISED
+
+    # The T(S) function should agree with evaluate_path.
+    identity = IdentityState(node=result["final_identity"])
+    identity.identity_chain = result["identity_chain"]
+    ts = evaluate_terminal_state(identity, result["capabilities"], graph)
+    assert ts == result["terminal_state"]

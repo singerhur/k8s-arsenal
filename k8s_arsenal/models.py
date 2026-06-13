@@ -65,6 +65,23 @@ class EdgeSource(Enum):
     DEFAULT = "default"           # 系统默认边（SA Token→API Server 等）
 
 
+class AttackTerminalState(str, Enum):
+    """攻击终态分类 —— T(S, G, p) 的三值语义空间
+
+    v0.5.1 统一出口函数 evaluate_terminal_state() 的返回值。
+    不是 heuristic 打分，而是三条可计算判定谓词的组合：
+
+    SAFE:        当前身份没有危险能力，也无法到达任何关键资产。
+    PARTIAL:     未达成完全失陷，但当前身份在攻击图中仍可到达关键资产
+                 ——攻击者「在轨道上」但尚未抵达终点。
+    COMPROMISED: 已获得 cluster-admin 等价权限（escalate_rbac / impersonate）
+                 或满足指定阈值 —— 完全集群失陷。
+    """
+    SAFE = "safe"
+    PARTIAL = "partial"
+    COMPROMISED = "compromised"
+
+
 @dataclass
 class TrustEdge:
     """信任关系边（组件间的信任关系）
@@ -112,7 +129,7 @@ class PathEvaluationResult:
     identity_chain: list[str]
     capabilities: set[str]
     trace: list[dict]
-    is_compromised: bool
+    terminal_state: AttackTerminalState
 
 
 @dataclass

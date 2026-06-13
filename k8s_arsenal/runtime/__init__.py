@@ -14,6 +14,7 @@ from k8s_arsenal.runtime.capability_set import (
     is_compromised,
     update_capability,
 )
+from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
 
 __all__ = [
     "IdentityState",
@@ -22,4 +23,5 @@ __all__ = [
     "update_capability",
     "is_compromised",
     "evaluate_path",
+    "evaluate_terminal_state",
 ]

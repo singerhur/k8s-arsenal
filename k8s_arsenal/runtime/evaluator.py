@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from k8s_arsenal.runtime.identity_flow import IdentityState, propagate_identity
-from k8s_arsenal.runtime.capability_set import CapabilityState, is_compromised, update_capability
+from k8s_arsenal.runtime.capability_set import CapabilityState, update_capability
+from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
 
 if TYPE_CHECKING:
     from k8s_arsenal.models import AttackGraph, PathEvaluationResult, TrustEdge
@@ -93,10 +94,14 @@ def evaluate_path(
             }
         )
 
+    terminal_state = evaluate_terminal_state(
+        identity, caps.capabilities, graph, compromise_threshold
+    )
+
     return {
         "final_identity": identity.node,
         "identity_chain": identity.identity_chain,
         "capabilities": caps.capabilities,
         "trace": trace,
-        "is_compromised": is_compromised(caps, compromise_threshold),
+        "terminal_state": terminal_state,
     }
