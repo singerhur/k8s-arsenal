@@ -58,14 +58,35 @@ class AttackVector:
 
 
 @dataclass
+class EdgeSource(Enum):
+    """信任边的来源类型"""
+    OBSERVATION = "observation"  # 直接从 K8s API 对象提取（RoleBinding/ClusterRoleBinding）
+    INFERENCE = "inference"      # 从 Role rules 语义推导（能力→资源→资产）
+    DEFAULT = "default"           # 系统默认边（SA Token→API Server 等）
+
+
+@dataclass
 class TrustEdge:
-    """信任关系边（组件间的信任关系）"""
+    """信任关系边（组件间的信任关系）
+
+    metadata 字段用于区分"观测事实边"和"语义推导边"：
+    - observation: 直接来自 kubectl get rolebinding/clusterrolebinding
+    - inference: 从 Role.rules 推导（verbs=get secrets → 可读某 SA Token → 可冒充该身份）
+    - default: 系统隐含边（标准 SA Token → API Server 访问）
+
+    metadata 推荐字段：
+    - source: EdgeSource 枚举值
+    - evidence: {"type": "RoleBinding", "name": "...", "namespace": "..."}
+    - capability: {"verbs": [...], "resources": [...]}
+    - derived_from: ["edge_id_1", "edge_id_2"]
+    """
     source: str
     target: str
     relationship: str
     credential_type: Optional[str] = None
     auto_rotated: bool = False
     risk: RiskLevel = RiskLevel.MEDIUM
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

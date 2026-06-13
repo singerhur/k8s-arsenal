@@ -1,7 +1,7 @@
 """Tests for k8s_arsenal.models — data model definitions."""
 
 import pytest
-from k8s_arsenal.models import AttackVector, AttackPath, AttackPhase, RiskLevel
+from k8s_arsenal.models import AttackVector, AttackPath, AttackPhase, RiskLevel, TrustEdge, EdgeSource
 
 
 class TestAttackPhase:
@@ -95,3 +95,106 @@ class TestAttackPath:
             estimated_time="N/A",
         )
         assert len(path.vectors) == 0
+
+
+class TestEdgeSource:
+    def test_edge_source_values(self):
+        assert EdgeSource.OBSERVATION.value == "observation"
+        assert EdgeSource.INFERENCE.value == "inference"
+        assert EdgeSource.DEFAULT.value == "default"
+
+    def test_edge_source_members(self):
+        values = [e.value for e in EdgeSource]
+        assert "observation" in values
+        assert "inference" in values
+        assert "default" in values
+
+
+class TestTrustEdge:
+    def test_create_minimal_edge(self):
+        e = TrustEdge(
+            source="sa-a",
+            target="sa-b",
+            relationship="RoleBinding",
+        )
+        assert e.source == "sa-a"
+        assert e.target == "sa-b"
+        assert e.relationship == "RoleBinding"
+        assert e.auto_rotated is False
+        assert e.risk == RiskLevel.MEDIUM
+        assert e.metadata == {}
+
+    def test_edge_with_metadata_observation(self):
+        e = TrustEdge(
+            source="ci-ns/ci-sa",
+            target="prod-ns/ci-admin",
+            relationship="RoleBinding: Role/ci-admin",
+            credential_type="RBAC: RoleBinding",
+            auto_rotated=False,
+            risk=RiskLevel.HIGH,
+            metadata={
+                "source": EdgeSource.OBSERVATION.value,
+                "evidence": {
+                    "type": "RoleBinding",
+                    "name": "ci-admin-binding",
+                    "namespace": "prod-ns",
+                },
+            },
+        )
+        assert e.metadata["source"] == "observation"
+        assert e.metadata["evidence"]["type"] == "RoleBinding"
+        assert e.metadata["evidence"]["namespace"] == "prod-ns"
+
+    def test_edge_with_metadata_inference(self):
+        e = TrustEdge(
+            source="prod-ns/ci-admin",
+            target="prod-ns/prod-app-sa",
+            relationship="Role capability derivation",
+            credential_type="RBAC: verbs=create",
+            auto_rotated=False,
+            risk=RiskLevel.HIGH,
+            metadata={
+                "source": EdgeSource.INFERENCE.value,
+                "derived_from": ["ci-ns/ci-sa->prod-ns/ci-admin"],
+                "capability": {
+                    "verbs": ["create", "get"],
+                    "resources": ["deployments"],
+                },
+                "reasoning": "ci-admin can create deployments -> can deploy pods with prod-app-sa",
+            },
+        )
+        assert e.metadata["source"] == "inference"
+        assert len(e.metadata["derived_from"]) == 1
+        assert "deployments" in e.metadata["capability"]["resources"]
+
+    def test_edge_with_metadata_default(self):
+        e = TrustEdge(
+            source="any-sa",
+            target="kube-apiserver",
+            relationship="Standard SA Token",
+            credential_type="ServiceAccount Token (JWT)",
+            auto_rotated=True,
+            risk=RiskLevel.MEDIUM,
+            metadata={
+                "source": EdgeSource.DEFAULT.value,
+                "reasoning": "Every SA has default JWT token",
+            },
+        )
+        assert e.metadata["source"] == "default"
+        assert e.auto_rotated is True
+
+    def test_edges_can_be_distinguished_by_source(self):
+        """可以按 metadata.source 区分观测边和推导边"""
+        obs = TrustEdge(
+            source="a", target="b", relationship="X",
+            metadata={"source": "observation"},
+        )
+        inf = TrustEdge(
+            source="c", target="d", relationship="Y",
+            metadata={"source": "inference"},
+        )
+        edges = [obs, inf]
+        obs_edges = [e for e in edges if e.metadata.get("source") == "observation"]
+        inf_edges = [e for e in edges if e.metadata.get("source") == "inference"]
+        assert len(obs_edges) == 1
+        assert len(inf_edges) == 1
