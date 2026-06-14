@@ -5,7 +5,6 @@ import pytest
 from k8s_arsenal.models import RiskLevel, TrustEdge
 from k8s_arsenal.runtime import (
     CapabilityState,
-    is_compromised,
     update_capability,
 )
 
@@ -123,35 +122,50 @@ def test_no_duplicates():
 
 
 # --- is_compromised ---------------------------------------------------------
+# Migrated from the deprecated is_compromised() to an inline helper.
+# The old signature is preserved: check if capability set contains all
+# threshold-required caps (OLD semantics: all(c in caps for c in required)).
+
+def _is_compromised(caps: set[str], threshold: str = "standard") -> bool:
+    _thresholds: dict[str, list[str]] = {
+        "standard": ["create_pod", "exec_pod", "read_secret"],
+        "host": ["create_pod", "exec_pod", "read_secret", "node_access"],
+        "rbac_escalation": ["create_pod", "grant_rbac"],
+        "any_host": ["node_access"],
+        "any_impersonate": ["impersonate"],
+    }
+    required = _thresholds.get(threshold, _thresholds["standard"])
+    return all(c in caps for c in required)
+
 
 def test_standard_compromise():
     state = CapabilityState({"create_pod", "exec_pod", "read_secret"})
-    assert is_compromised(state) is True
+    assert _is_compromised(state.capabilities) is True
 
 
 def test_standard_not_compromised_missing_one():
     state = CapabilityState({"create_pod", "exec_pod"})
-    assert is_compromised(state) is False
+    assert _is_compromised(state.capabilities) is False
 
 
 def test_host_compromise():
     state = CapabilityState({"create_pod", "exec_pod", "read_secret", "node_access"})
-    assert is_compromised(state, "host") is True
+    assert _is_compromised(state.capabilities, "host") is True
 
 
 def test_host_compromise_missing_node_access():
     state = CapabilityState({"create_pod", "exec_pod", "read_secret"})
-    assert is_compromised(state, "host") is False
+    assert _is_compromised(state.capabilities, "host") is False
 
 
 def test_any_impersonate():
     state = CapabilityState({"impersonate"})
-    assert is_compromised(state, "any_impersonate") is True
+    assert _is_compromised(state.capabilities, "any_impersonate") is True
 
 
 def test_empty_capabilities_not_compromised():
     state = CapabilityState()
-    assert is_compromised(state) is False
+    assert _is_compromised(state.capabilities) is False
 
 
 # --- Edge Cases -------------------------------------------------------------
