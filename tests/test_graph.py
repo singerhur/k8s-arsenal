@@ -59,22 +59,19 @@ class TestAttackGraph:
         g = AttackGraph()
         assert g.nodes == {}
         assert g.edges == []
-        assert g.paths == []
         assert g.entry_points == []
         assert g.critical_assets == []
 
-    def test_with_paths(self) -> None:
-        path = AttackPath(id="test-1", name="test", description="test path")
+    def test_with_edges(self) -> None:
+        """AttackGraph with explicit edges/nodes (paths field removed v0.9.2)."""
         g = AttackGraph(
             nodes={"a": "pod-a", "b": "node-b"},
             edges=[TrustEdge(source="a", target="b", relationship="runs_on")],
-            paths=[path],
             entry_points=["a"],
             critical_assets=["b"],
         )
         assert len(g.nodes) == 2
         assert len(g.edges) == 1
-        assert len(g.paths) == 1
         assert g.entry_points == ["a"]
         assert g.critical_assets == ["b"]
 
@@ -99,12 +96,13 @@ class TestBuildGraph:
         g = build_graph(sample_edges, nodes=nodes)
         assert g.nodes == nodes
 
-    def test_with_paths(self, sample_edges: list[TrustEdge]) -> None:
+    def test_with_attack_paths_accepted(self, sample_edges: list[TrustEdge]) -> None:
+        """build_graph accepts attack_paths arg (paths field removed v0.9.2)."""
         path1 = AttackPath(id="p1", name="path1", description="test")
         path2 = AttackPath(id="p2", name="path2", description="test")
         g = build_graph(sample_edges, attack_paths=[path1, path2])
-        assert len(g.paths) == 2
-        assert g.paths[0].id == "p1"
+        # Graph builds successfully; paths field was dead code (v0.9.2).
+        assert len(g.edges) > 0
 
     def test_empty(self) -> None:
         g = build_graph([])

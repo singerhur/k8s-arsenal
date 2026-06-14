@@ -141,7 +141,6 @@ class AttackGraph:
     """
     nodes: dict[str, str] = field(default_factory=dict)
     edges: list[TrustEdge] = field(default_factory=list)
-    paths: list[AttackPath] = field(default_factory=list)
     entry_points: list[str] = field(default_factory=list)
     critical_assets: list[str] = field(default_factory=list)
 

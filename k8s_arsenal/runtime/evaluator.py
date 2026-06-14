@@ -63,7 +63,7 @@ def evaluate_path(
         - identity_chain: full identity transition trace
         - capabilities: cumulative capability set
         - trace: step-by-step (node, identity, capabilities)
-        - is_compromised: bool — does capability set meet threshold?
+        - terminal_state: AttackTerminalState — SAFE / PARTIAL / COMPROMISED
 
     Raises:
         ValueError: If path has < 2 nodes or edges cannot be resolved.

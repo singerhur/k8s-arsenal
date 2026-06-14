@@ -64,6 +64,22 @@ class CapabilityState:
         return capability in self.capabilities
 
 
+# ── relationship hint capabilities (fallback for unannotated trust_map edges) ────
+# When trust_map edges lack metadata (neither explicit capability nor role_rules),
+# this mapping provides conservative capability hints based on well-known
+# trust relationship semantics. Docker Socket implies container breakout;
+# TokenAccess implies identity transition capability (used by identity_flow).
+_RELATIONSHIP_HINT_CAPABILITIES: dict[str, set[str]] = {
+    # Production trust_map.py strings
+    "挂载 Docker Socket": {"node_access"},
+    # Test fixture / English aliases
+    "Docker Socket": {"node_access"},
+    "Docker Socket 挂载": {"node_access"},
+    "Host PID": {"node_access"},
+    "特权容器": {"node_access", "create_pod", "exec_pod"},
+}
+
+
 def _capability_from_rules(rules: list[dict]) -> set[str]:
     """Extract capability tokens from Role/ClusterRole rule list.
 
@@ -105,17 +121,37 @@ def update_capability(state: CapabilityState, edge: TrustEdge) -> CapabilityStat
         new_caps = _capability_from_rules(role_rules)
         state.capabilities.update(new_caps)
 
+    # Source 3: relationship hint fallback (trust_map edges with no metadata)
+    # Only active when both explicit sources are empty — uses conservative
+    # heuristics for well-known trust relationship types.
+    if not cap_meta and not role_rules:
+        hint = _RELATIONSHIP_HINT_CAPABILITIES.get(edge.relationship, None)
+        if hint:
+            state.capabilities.update(hint)
+
     return state
 
 
 def is_compromised(state: CapabilityState, threshold: str = "standard") -> bool:
-    """Check if cumulative capabilities imply cluster compromise.
+    """[DEPRECATED] Check if cumulative capabilities imply cluster compromise.
+
+    Use `evaluate_terminal_state()` in `runtime/terminal_state.py` instead,
+    which supports the full T(S) with graph-aware PARTIAL detection.
+
+    Kept for backward compatibility. Delegates to hard-compromise check only.
 
     Thresholds:
     - "standard": create_pod + exec_pod + read_secret  (privileged pod route)
     - "host": add node_access to the above  (direct node compromise)
     - "rbac_escalation": create_pod + grant_rbac  (deploy + escalate)
     """
+    import warnings
+    warnings.warn(
+        "capability_set.is_compromised() is deprecated. "
+        "Use evaluate_terminal_state() for graph-aware T(S) evaluation.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     caps = state.capabilities
 
     thresholds: dict[str, list[str]] = {

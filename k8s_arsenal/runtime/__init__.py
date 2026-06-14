@@ -16,7 +16,7 @@ from k8s_arsenal.runtime.capability_set import (
 )
 from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
 from k8s_arsenal.runtime.counterfactual import counterfactual
-from k8s_arsenal.runtime.minimal_cut import greedy_minimal_cut, minimal_cut_set
+from k8s_arsenal.runtime.minimal_cut import greedy_minimal_cut, minimal_cut_set, verify_cut_set
 from k8s_arsenal.runtime.classifier import AttackLabel, classify, infer_tactic
 from k8s_arsenal.runtime.invariants import (
     assert_attack_label_dimensions_separated,
@@ -38,6 +38,11 @@ from k8s_arsenal.runtime.invariants import (
     assert_terminal_state_valid,
     validate_trace_result,
 )
+from k8s_arsenal.runtime.engine import (
+    AnalysisResult,
+    AttackGraphEngine,
+    CounterfactualResult,
+)
 
 __all__ = [
     "IdentityState",
@@ -50,6 +55,7 @@ __all__ = [
     "counterfactual",
     "greedy_minimal_cut",
     "minimal_cut_set",
+    "verify_cut_set",
     "AttackLabel",
     "classify",
     "infer_tactic",
@@ -72,4 +78,8 @@ __all__ = [
     "assert_tactic_label_valid",
     "assert_terminal_state_valid",
     "validate_trace_result",
+    # v0.9.2 engine
+    "AnalysisResult",
+    "AttackGraphEngine",
+    "CounterfactualResult",
 ]

@@ -209,3 +209,92 @@ def minimal_cut_set(
         "strategy": "exact",
         "note": "Greedy solution is provably optimal (exhaustive verified).",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MCS Counterfactual Verification Gate (v0.9.2)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def verify_cut_set(
+    graph: "AttackGraph",
+    cut_edges: list[tuple[str, str, str]],
+    start: str,
+    target: str,
+    threshold: str = "standard",
+) -> tuple[bool, str]:
+    """Verify that removing all cut edges neutralizes all COMPROMISED paths.
+
+    This is the counterfactual gate for MCS: if MCS says "these edges are the
+    minimal cut," we verify by actually removing them and re-checking T(S).
+    A passing verification means the cut set is sufficient (though not
+    necessarily minimal — that's proven by the subset enumeration in
+    minimal_cut_set).
+
+    Args:
+        graph: The original AttackGraph.
+        cut_edges: Cut set as (source, target, relationship) tuples.
+        start: Start/entry node.
+        target: Target/critical asset node.
+        threshold: Compromise threshold.
+
+    Returns:
+        (verified: bool, note: str). verified=True means zero COMPROMISED
+        paths remain after removing all cut edges.
+    """
+    from copy import deepcopy
+    from k8s_arsenal.playbook.chains import shortest_path
+    from k8s_arsenal.runtime.evaluator import evaluate_path
+    from k8s_arsenal.models import AttackTerminalState
+
+    if not cut_edges:
+        return True, "Empty cut set — nothing to verify."
+
+    # Build counterfactual graph with all cut edges removed.
+    G_cf = deepcopy(graph)
+    cut_set = set(cut_edges)
+    G_cf.edges = [
+        e for e in G_cf.edges
+        if (e.source, e.target, e.relationship) not in cut_set
+    ]
+
+    # Enumerate all simple paths in the cut graph and check T(S).
+    compromised_found = 0
+    paths_checked = 0
+
+    # Use DFS enumeration (same pattern as _all_compromised_paths).
+    adj: dict[str, list[tuple[str, object]]] = {}
+    for e in G_cf.edges:
+        adj.setdefault(e.source, []).append((e.target, e))
+
+    def dfs(nodes: list[str]):
+        nonlocal compromised_found, paths_checked
+        if compromised_found >= 3:  # Early exit after finding a few failures.
+            return
+        current = nodes[-1]
+        if current == target:
+            paths_checked += 1
+            result = evaluate_path(G_cf, list(nodes), compromise_threshold=threshold)
+            if result["terminal_state"] == AttackTerminalState.COMPROMISED:
+                compromised_found += 1
+            return
+        for nxt, _ in adj.get(current, []):
+            if nxt not in nodes:
+                nodes.append(nxt)
+                dfs(nodes)
+                nodes.pop()
+
+    dfs([start])
+
+    if compromised_found > 0:
+        return False, (
+            f"MCS verification FAILED: {compromised_found} COMPROMISED path(s) "
+            f"remain after removing {len(cut_edges)} edge(s). "
+            f"({paths_checked} paths checked). Cut set is INCOMPLETE."
+        )
+
+    return True, (
+        f"MCS verified: removing {len(cut_edges)} edge(s) neutralizes "
+        f"all COMPROMISED paths ({paths_checked} checked, 0 compromised). "
+        f"Cut set is sufficient."
+    )

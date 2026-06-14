@@ -31,6 +31,39 @@ All notable changes to K8s Arsenal will be documented in this file.
 - 无行为变更（T(S)/identity/capability 输出不变），仅数据可见性增强
 - 384 passed / 3 skipped / 0 failed — 零回归
 
+## [0.9.2] - 2026-06-14
+
+### Added
+- **AttackGraphEngine** (`runtime/engine.py`): 统一的六层管线 API，桥接 CLI↔runtime 断裂
+  - `AttackGraphEngine.from_trust_map(edges, entry_identity, critical_assets)` — 一行构建
+  - `engine.analyze(compromise_threshold, run_counterfactuals, run_mcs, run_classifier, verify_mcs)` — 全管线执行
+  - `EngineResult` dataclass: graph, terminal_state, final_identity, identity_chain, capabilities,
+    trace, counterfactuals, mcs_cut_edges, labels, terminal_explanation
+- **CLI `analyze` 命令** (`cli.py`, ~130 LOC): 将 `AttackGraphEngine` 接入 CLI
+  - `--full-pipeline`, `--quick`, `--json`, `--entry`, `--target` 选项
+  - Interactive menu option 10
+- **MCS 验证门** (`runtime/minimal_cut.py`): `verify_cut_set()` — 验证每条割边移除后目标不可达
+- **集成契约测试** (`tests/test_recon_to_runtime_contract.py`, 13 tests): trust_map 产出 → runtime 管线的端到端验证
+- **Edge 验证警告** (`engine.py`): 运行时检测 metadata 缺失/关系未识别，不崩溃仅警告
+- **能力 Source 3 回退** (`capability_set.py`): DockerSocket → node_access, HostPID → node_access, Privileged → node_access
+
+### Fixed
+- `known_rels` 补全 9 个中文关系名（之前只含英文 key，中文边被误报 unrecognized）
+- `_RELATIONSHIP_HINT_CAPABILITIES` 补全中文 key 映射
+- `build_graph()` nodes 自动从 edges 提取（修复 `graph_summary.nodes: 0`）
+- `best_trace` 在 SAFE 路径下为 None 的 bug (`>` 改为 `>=` 比较)
+- `AttackGraph.paths` 死字段移除
+- `capability_set.is_compromised()` → DeprecationWarning + 委托到 `terminal_state.is_compromised()`
+
+### Changed
+- `models.py`: 移除 `AttackGraph.paths`（G-layer 不再缓存路径）
+- `runtime/capability_set.py`: `is_compromised()` 标记 deprecated，迁移到 terminal_state 版本
+- `playbook/chains.py`: `build_graph()` 从 edges 自动填充 nodes set
+
+---
+- 397 passed / 3 skipped / 0 failures — 零回归
+- 实战验证: minikube 攻防实验通过，攻击面全生命周期（部署→探测→清理）
+
 ## [0.8.0] - 2026-06-13
 
 ### Added

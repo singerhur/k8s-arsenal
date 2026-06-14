@@ -62,6 +62,58 @@ def _collect_all_attack_vectors():
     )
 
 
+def _print_analyze_json(result, output: Optional[str] = None) -> None:
+    """Serialize AnalysisResult to JSON and print or save."""
+    from k8s_arsenal.runtime.engine import AnalysisResult
+
+    cf_data = []
+    for cf in result.counterfactuals:
+        cf_data.append({
+            "edge": list(cf.edge),
+            "baseline_state": cf.baseline_state.value,
+            "counterfactual_state": cf.counterfactual_state.value,
+            "became_safe": cf.became_safe,
+            "became_compromised": cf.became_compromised,
+            "explanation": cf.explanation,
+        })
+
+    data = {
+        "entry_identity": result.entry_identity,
+        "critical_assets": result.critical_assets,
+        "threshold": result.threshold,
+        "terminal_state": result.terminal_state.value,
+        "final_identity": result.final_identity,
+        "identity_chain": result.identity_chain,
+        "capabilities": sorted(result.capabilities) if result.capabilities else [],
+        "path_count": result.path_count,
+        "trace": result.trace,
+        "counterfactuals": cf_data,
+        "critical_edges": [list(e) for e in result.critical_edges],
+        "mcs": {
+            "cut_edges": [list(e) for e in result.mcs_cut_edges],
+            "strategy": result.mcs_strategy,
+            "verified": result.mcs_verified,
+            "verification_note": result.mcs_verification_note,
+        },
+        "classifier": {
+            "labels": result.labels,
+            "primary_tactic": result.primary_tactic,
+        },
+        "terminal_explanation": result.terminal_explanation,
+        "graph_summary": {
+            "nodes": len(result.graph.nodes),
+            "edges": len(result.graph.edges),
+        },
+    }
+
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        console.print(f"\n[green]报告已保存至: {output}[/green]")
+    else:
+        console.print_json(data=data)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="k8s-arsenal")
 def main():
@@ -679,6 +731,151 @@ def playbook(entry, target, smart, run, dry_run, stealth, list_commands, output)
     console.print("  [dim]k8s-arsenal playbook --list-commands[/dim]")
     console.print("  [dim]k8s-arsenal playbook --list-commands --stealth[/dim]")
     console.print("  [dim]k8s-arsenal playbook --list-commands -o attack.sh[/dim]")
+
+
+# ════════════════════════════════════════════════════════════════════
+# analyze — 攻击图完整分析 (v0.5+ 六层管道)
+# ════════════════════════════════════════════════════════════════════
+
+@main.command(epilog="""
+\b示例:
+  k8s-arsenal analyze                              # 自动检测入口点和关键资产
+  k8s-arsenal analyze --entry kube-apiserver --target etcd
+  k8s-arsenal analyze --full-pipeline --json       # 六层完整分析 + JSON 输出
+  k8s-arsenal analyze --threshold host              # 使用 host 攻击阈值
+  k8s-arsenal analyze --quick                       # 快速模式 (仅 G+S+T)
+  k8s-arsenal analyze -o report.json               # 保存报告
+""")
+@click.option("--entry", default="", help="入口节点 (默认: 自动检测)")
+@click.option("--target", "targets", multiple=True, help="关键资产节点 (可多次指定)")
+@click.option("--full-pipeline/--quick", default=True, help="完整六层分析(默认) vs 快速评估")
+@click.option("--threshold", default="standard",
+              type=click.Choice(["standard", "host", "rbac_escalation", "any_host", "any_impersonate"]),
+              help="攻击阈值 (默认: standard)")
+@click.option("--json", "as_json", is_flag=True, help="JSON 格式输出")
+@click.option("--output", "-o", type=click.Path(), help="输出报告路径")
+def analyze(entry: str, targets: tuple, full_pipeline: bool,
+            threshold: str, as_json: bool, output: Optional[str]):
+    """攻击图完整分析 — G → S → T → Δ → MCS → Label 六层管道
+
+    基于信任拓扑构建攻击图，运行完整的六层分析管道：
+
+    G   — 图可达性（BFS 路径搜索）
+    S   — 状态演化（身份 + 能力累积）
+    T   — 终端语义（SAFE / PARTIAL / COMPROMISED）
+    Δ   — 单边反事实（因果依赖性分析）
+    MCS — 最小割集（组合因果关系）
+    Label — 攻击战术分类（5 种战术投影）
+
+    这是 v0.5+ runtime 管道的 CLI 入口。
+    """
+    from k8s_arsenal.recon.k8s_enum import enumerate_environment
+    from k8s_arsenal.recon.trust_map import build_trust_topology
+    from k8s_arsenal.runtime.engine import AttackGraphEngine, AnalysisResult
+
+    console.print(Panel.fit("[bold cyan]K8s Arsenal — 攻击图完整分析[/bold cyan]"))
+    console.print(f"[dim]管道: G → S → T → Δ → MCS → Label[/dim]")
+
+    with console.status("[cyan]分析信任拓扑并运行攻击图管道...[/cyan]"):
+        # 1. 构建信任拓扑
+        profile = enumerate_environment()
+        trust_edges = build_trust_topology(profile)
+
+        # 2. 创建引擎
+        engine = AttackGraphEngine.from_trust_map(trust_edges)
+
+        # 3. 运行完整管道
+        result = engine.analyze(
+            entry_identity=entry or engine.entry_identity,
+            critical_assets=list(targets) if targets else None,
+            compromise_threshold=threshold,
+            run_counterfactuals=full_pipeline,
+            run_mcs=full_pipeline,
+            run_classifier=full_pipeline,
+            verify_mcs=full_pipeline,
+        )
+
+    if as_json:
+        _print_analyze_json(result, output)
+        return
+
+    # ---- Rich 格式输出 ------------------------------------------------
+
+    # 攻击图概览
+    console.print(f"\n[bold]攻击图概览:[/bold]")
+    console.print(f"  节点: {len(result.graph.nodes)}")
+    console.print(f"  边: {len(result.graph.edges)}")
+    console.print(f"  入口点: {result.entry_identity}")
+    console.print(f"  关键资产: {', '.join(result.critical_assets) if result.critical_assets else '(auto)'}")
+    console.print(f"  阈值: {result.threshold}")
+
+    # 终端状态 (T)
+    state_color = {
+        "safe": "green",
+        "partial": "yellow",
+        "compromised": "red",
+    }.get(result.terminal_state.value, "white")
+    console.print(f"\n[bold]终端状态 (T):[/bold] [{state_color}]{result.terminal_state.value.upper()}[/{state_color}]")
+
+    # 身份链
+    if result.identity_chain:
+        chain_str = " → ".join(result.identity_chain)
+        console.print(f"[bold]身份链:[/bold] [cyan]{chain_str}[/cyan]")
+
+    # 能力集
+    if result.capabilities:
+        caps_str = ", ".join(sorted(result.capabilities))
+        console.print(f"[bold]能力集:[/bold] [yellow]{caps_str}[/yellow]")
+    else:
+        console.print(f"[bold]能力集:[/bold] [dim](无危险能力)[/dim]")
+
+    # 轨迹摘要
+    if result.trace:
+        console.print(f"\n[bold]攻击轨迹 ({len(result.trace)} 步):[/bold]")
+        for i, step in enumerate(result.trace, 1):
+            et = step.get("edge_type", "?")
+            ident = step.get("identity", "?")
+            node = step.get("node", "?")
+            caps = ", ".join(step.get("capabilities", [])) or "-"
+            console.print(f"  {i}. {node} | identity={ident} | edge={et} | caps=[{caps}]")
+
+    # 反事实分析 (Δ)
+    if result.counterfactuals:
+        console.print(f"\n[bold]反事实分析 (Δ): {len(result.counterfactuals)} 条边[/bold]")
+        critical = [cf for cf in result.counterfactuals if cf.became_safe]
+        if critical:
+            console.print(f"  [red]关键边 ({len(critical)}):[/red]")
+            for cf in critical:
+                src, tgt, rel = cf.edge
+                console.print(f"    • {src} → {tgt} ({rel}): {cf.explanation[:100]}")
+        else:
+            console.print(f"  [green]无关键边 — 所有边移除后仍有替代路径[/green]")
+
+    # 最小割集 (MCS)
+    if result.mcs_cut_edges:
+        console.print(f"\n[bold]最小割集 (MCS): {len(result.mcs_cut_edges)} 条边[/bold]")
+        console.print(f"  策略: [cyan]{result.mcs_strategy}[/cyan]")
+        for cut in result.mcs_cut_edges:
+            src, tgt, rel = cut
+            console.print(f"    • [{src}] → [{tgt}] ({rel})")
+        if result.mcs_verified is not None:
+            verify_color = "green" if result.mcs_verified else "red"
+            verify_icon = "✓" if result.mcs_verified else "✗"
+            console.print(f"  MCS 验证: [{verify_color}]{verify_icon} {result.mcs_verification_note}[/{verify_color}]")
+
+    # 攻击战术分类 (Label)
+    if result.primary_tactic:
+        console.print(f"\n[bold]攻击战术 (Label):[/bold] [magenta]{result.primary_tactic}[/magenta]")
+
+    # 详细说明
+    console.print(f"\n[bold dim]分析详情:[/bold dim]")
+    console.print(f"[dim]{result.terminal_explanation}[/dim]")
+
+    # 输出报告
+    if output:
+        _print_analyze_json(result, output)
+
+
 @main.command()
 @click.option("--format", "-f", "fmt", default="html",
               type=click.Choice(["json", "md", "html"]),
@@ -775,6 +972,7 @@ def interactive(ctx):
         console.print("  [cyan]7.[/cyan] 浏览技术编目 (catalog)")
         console.print("  [cyan]8.[/cyan] 查看使用示例")
         console.print("  [cyan]9.[/cyan] 信任拓扑映射 (trust-map)")
+        console.print("  [cyan]10.[/cyan] 攻击图完整分析 (analyze)")
         console.print("  [cyan]0.[/cyan] 退出")
 
         try:
@@ -810,6 +1008,12 @@ def interactive(ctx):
         elif choice == 9:
             attackable = click.confirm("仅显示可被利用的边?", default=False)
             ctx.invoke(trust_map_cmd, attackable=attackable)
+        elif choice == 10:
+            entry = click.prompt("入口节点 (留空自动检测)", default="")
+            targets_input = click.prompt("关键资产 (逗号分隔)", default="")
+            targets = tuple(t.strip() for t in targets_input.split(",") if t.strip())
+            full_pipeline = click.confirm("完整六层分析?", default=True)
+            ctx.invoke(analyze, entry=entry, targets=targets, full_pipeline=full_pipeline, threshold="standard", as_json=False, output=None)
         elif choice == 8:
             console.print("\n[bold]K8s Arsenal 使用示例:[/bold]")
             console.print(

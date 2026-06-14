@@ -416,8 +416,15 @@ def build_graph(
     graph = AttackGraph(
         nodes=nodes or {},
         edges=list(trust_edges),
-        paths=list(attack_paths) if attack_paths else [],
     )
+
+    # 自动填充节点标签：如果未显式提供 nodes 映射，从边提取节点 ID
+    if not nodes:
+        all_nodes: dict[str, str] = {}
+        for e in trust_edges:
+            all_nodes.setdefault(e.source, e.source)
+            all_nodes.setdefault(e.target, e.target)
+        graph.nodes = all_nodes
 
     # 自动提取入口点：只作为 source 出现但不作为 target 的节点
     sources = {e.source for e in trust_edges}
