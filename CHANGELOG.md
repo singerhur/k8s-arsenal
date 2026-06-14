@@ -31,6 +31,29 @@ All notable changes to K8s Arsenal will be documented in this file.
 - 无行为变更（T(S)/identity/capability 输出不变），仅数据可见性增强
 - 384 passed / 3 skipped / 0 failed — 零回归
 
+## [0.9.3] - 2026-06-14
+
+### Added
+- **ILP Minimal Cut Set** (`runtime/minimal_cut.py`): `ilp_minimal_cut()` — PuLP + CBC exact hitting-set solver
+  - Replaces greedy overestimation on parallel-path graphs with provably optimal ILP
+  - Formulation: min Σ x_e subject to Σ_{e in p} x_e ≥ 1 for all COMPROMISED paths
+  - Trivial-path shortcut: single edge covering all paths → skips ILP, returns O(1)
+  - Graceful fallback: if PuLP unavailable or solver fails → greedy
+- PuLP dependency (`pyproject.toml`): `PuLP>=2.7.0`
+
+### Changed
+- `minimal_cut_set()`: ILP is now the default solver (`use_ilp=True`)
+  - Falls back to exact subset enumeration → greedy when ILP is disabled/unavailable
+- `AttackGraphEngine._run_mcs()`: passes `use_ilp=True` to `minimal_cut_set()`
+- `runtime/__init__.py`: exports `ilp_minimal_cut`
+
+### Fixed
+- MCS strategy strings in tests now accept `"ilp"` / `"ilp (trivial)"` variants
+
+---
+- 403 passed / 3 skipped / 0 failures — 零回归
+- 6 new ILP-specific tests added (14 total MCS tests)
+
 ## [0.9.2] - 2026-06-14
 
 ### Added

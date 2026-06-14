@@ -23,7 +23,7 @@ from k8s_arsenal.playbook.chains import build_graph, shortest_path
 from k8s_arsenal.runtime.evaluator import evaluate_path
 from k8s_arsenal.runtime.terminal_state import evaluate_terminal_state
 from k8s_arsenal.runtime.counterfactual import counterfactual
-from k8s_arsenal.runtime.minimal_cut import minimal_cut_set, greedy_minimal_cut
+from k8s_arsenal.runtime.minimal_cut import minimal_cut_set, greedy_minimal_cut, ilp_minimal_cut
 from k8s_arsenal.runtime.classifier import classify, AttackLabel
 from k8s_arsenal.runtime.identity_flow import IdentityState
 
@@ -370,7 +370,7 @@ class AttackGraphEngine:
         best_size = float("inf")
 
         for target in critical:
-            mcs = minimal_cut_set(self.graph, entry, target, threshold)
+            mcs = minimal_cut_set(self.graph, entry, target, threshold, use_ilp=True)
             if mcs["size"] > 0 and mcs["size"] < best_size:
                 best_size = mcs["size"]
                 best_mcs = mcs

@@ -375,7 +375,7 @@ k8s_arsenal/
 ├── README.md                  # 本文档
 ├── CHANGELOG.md               # 变更记录
 ├── k8s_arsenal/
-│   ├── __init__.py            # 版本号 (v0.9.2)
+│   ├── __init__.py            # 版本号 (v0.9.3)
 │   ├── models.py              # 核心数据模型（AttackGraph, TrustEdge 等）
 │   ├── cli.py                 # CLI 入口
 │   ├── runtime/               # 🔷 攻击图状态机层 (v0.5–v0.9)

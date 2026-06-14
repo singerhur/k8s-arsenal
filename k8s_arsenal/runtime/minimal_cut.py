@@ -1,6 +1,7 @@
 """Minimal Cut Set — combinatorial causality analysis.
 
 v0.7: find minimal E' ⊂ E s.t. T(S(G - E')) != COMPROMISED.
+v0.9.3: add ILP exact hitting-set solver (PuLP + CBC).
 
 Extends v0.6 from single-edge counterfactual to set-level causality
 by solving a hitting-set problem over compromised witness paths.
@@ -10,6 +11,12 @@ from __future__ import annotations
 
 from itertools import combinations
 from typing import TYPE_CHECKING
+
+try:
+    import pulp
+    HAS_PULP = True
+except ImportError:  # pragma: no cover
+    HAS_PULP = False
 
 if TYPE_CHECKING:
     from k8s_arsenal.models import AttackGraph
@@ -80,6 +87,138 @@ def _incidence(paths: list[list[tuple[str, str, str]]]) -> dict[
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# ILP Minimal Cut Set (v0.9.3) — PuLP-based exact hitting-set solver
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def ilp_minimal_cut(
+    graph: "AttackGraph",
+    start: str,
+    target: str,
+    threshold: str = "standard",
+    max_compromised_paths: int = 500,
+) -> dict:
+    """ILP exact hitting-set via PuLP (CBC solver).
+
+    Formulation:
+      - Variables: x_e ∈ {0,1} — 1 if edge e is cut
+      - Objective: minimize Σ x_e
+      - Constraints: for each COMPROMISED path p, Σ_{e in p} x_e ≥ 1
+
+    Falls back to greedy if PuLP is unavailable or if the ILP is
+    infeasible/timeout. This solver is theoretically exact and does
+    not suffer from the greedy overestimation on parallel paths.
+
+    Args:
+        graph: AttackGraph with edges and trust topology.
+        start: Entry/start node.
+        target: Critical asset / target node.
+        threshold: Compromise threshold for terminal state.
+        max_compromised_paths: Safety limit on path enumeration (default 500).
+
+    Returns:
+        Dict with keys: strategy, cut_edges, size, baseline_paths,
+        explanation, and solver-specific fields.
+    """
+    paths_comp = _all_compromised_paths(
+        graph, start, target, threshold, max_paths=max_compromised_paths,
+    )
+
+    if not paths_comp:
+        return {
+            "strategy": "ilp",
+            "cut_edges": [],
+            "size": 0,
+            "baseline_paths": [],
+            "explanation": "No COMPROMISED paths exist; cut set is empty.",
+        }
+
+    node_paths = [np for np, _ in paths_comp]
+    edge_paths = [ep for _, ep in paths_comp]
+
+    if not HAS_PULP:  # pragma: no cover
+        # Fall back to greedy if PuLP not installed.
+        greedy = greedy_minimal_cut(graph, start, target, threshold)
+        return {
+            **greedy,
+            "strategy": "greedy (ILP unavailable — install PuLP)",
+            "note": "PuLP not installed. Install with: pip install pulp",
+        }
+
+    # Build edge→path incidence map and candidate edge list.
+    inc = _incidence(edge_paths)
+    candidate_edges = list(inc.keys())
+    n_paths = len(paths_comp)
+
+    # If only one candidate edge hits everything, it's trivially optimal.
+    for sig, hit_set in inc.items():
+        if len(hit_set) == n_paths:
+            return {
+                "strategy": "ilp (trivial)",
+                "cut_edges": [sig],
+                "size": 1,
+                "baseline_paths": node_paths,
+                "total_compromised_paths": n_paths,
+                "explanation": (
+                    "Single edge covers all COMPROMISED paths — optimal."
+                ),
+            }
+
+    # Build ILP model.
+    prob = pulp.LpProblem("MCS_HittingSet", pulp.LpMinimize)
+
+    x = [
+        pulp.LpVariable(f"x_{i}", cat=pulp.LpBinary)
+        for i in range(len(candidate_edges))
+    ]
+
+    # Objective: minimize Σ x_i
+    prob += pulp.lpSum(x)
+
+    # Constraints: each compromised path must be hit at least once.
+    for p_idx, ep in enumerate(edge_paths):
+        # Get indices of candidate edges that appear on this path.
+        edge_indices = []
+        for sig in ep:
+            if sig in inc:
+                edge_indices.append(candidate_edges.index(sig))
+        if edge_indices:
+            prob += pulp.lpSum(x[i] for i in edge_indices) >= 1, f"path_{p_idx}"
+
+    # Suppress solver chatter.
+    solver = pulp.PULP_CBC_CMD(msg=False)
+    prob.solve(solver)
+
+    if pulp.LpStatus[prob.status] != "Optimal":
+        # ILP infeasible (shouldn't happen) — fall back to greedy.
+        greedy = greedy_minimal_cut(graph, start, target, threshold)
+        return {
+            **greedy,
+            "strategy": f"greedy (ILP {pulp.LpStatus[prob.status]})",
+            "note": f"ILP returned status: {pulp.LpStatus[prob.status]}",
+        }
+
+    # Extract solution.
+    cut = [candidate_edges[i] for i, var in enumerate(x) if pulp.value(var) == 1]
+
+    return {
+        "strategy": "ilp",
+        "cut_edges": cut,
+        "size": len(cut),
+        "baseline_paths": node_paths,
+        "total_compromised_paths": n_paths,
+        "candidate_edges": len(candidate_edges),
+        "ilp_objective": int(pulp.value(prob.objective)),
+        "ilp_status": pulp.LpStatus[prob.status],
+        "explanation": (
+            f"ILP exact minimal cut: {len(cut)} edge(s) out of "
+            f"{len(candidate_edges)} candidates, "
+            f"covering {n_paths} COMPROMISED path(s)."
+        ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Greedy MCS (baseline, ~40 lines)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -146,12 +285,33 @@ def minimal_cut_set(
     target: str,
     threshold: str = "standard",
     max_brute_force_edges: int = 28,
+    use_ilp: bool = True,
 ) -> dict:
-    """Exact minimum cardinality hitting set via subset enumeration.
+    """Exact minimum cardinality hitting set.
 
-    Uses greedy result as upper bound for pruning. Falls back to
-    greedy-only for graphs with too many candidate edges.
+    v0.9.3: Tries ILP (PuLP) first, then exact subset enumeration,
+    then greedy. ILP is the recommended solver — it is exact and
+    handles parallel-path graphs that greedy overestimates.
+
+    Args:
+        graph: AttackGraph with edges and trust topology.
+        start: Entry/start node.
+        target: Critical asset / target node.
+        threshold: Compromise threshold for terminal state.
+        max_brute_force_edges: Max candidate edges for subset enumeration.
+        use_ilp: Whether to attempt ILP solver (default True).
+
+    Returns:
+        Dict with cut_edges, size, strategy, explanation, and
+        solver-specific metadata.
     """
+    # Try ILP first (v0.9.3).
+    if use_ilp and HAS_PULP:
+        ilp_result = ilp_minimal_cut(graph, start, target, threshold)
+        if ilp_result["strategy"].startswith("ilp"):
+            return ilp_result
+        # ILP fell back to greedy — continue with exact/greedy path.
+
     paths_comp = _all_compromised_paths(graph, start, target, threshold)
     if not paths_comp:
         return {

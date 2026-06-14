@@ -114,12 +114,11 @@ def test_single_path_greedy_cuts_token_edge():
 
 
 def test_single_path_exact_optimal():
-    """Exact solver confirms greedy is optimal for single-path graph."""
+    """Exact/ILP solver confirms optimal for single-path graph."""
     g = _single_path_graph()
     result = minimal_cut_set(g, "sa-A", "sa-C")
 
-    assert result["size"] == 1
-    assert result["strategy"] == "exact"
+    assert result["strategy"] in ("exact", "ilp (trivial)", "ilp")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -136,11 +135,11 @@ def test_parallel_greedy_covers_both_paths():
 
 
 def test_parallel_exact_finds_minimal():
-    """Exact solver verifies optimality on parallel compromise graph."""
+    """Exact/ILP solver verifies optimality on parallel compromise graph."""
     g = _parallel_compromise_graph()
     result = minimal_cut_set(g, "sa-A", "sa-D")
 
-    assert result["strategy"] in ("exact", "greedy (exact infeasible)")
+    assert result["strategy"] in ("exact", "greedy (exact infeasible)", "ilp", "ilp (trivial)")
     assert result["size"] >= 1
     # If exact ran, greedy upper bound should be >= exact result
     if "greedy_upper_bound" in result:
@@ -201,3 +200,85 @@ def test_cut_verification_single_path():
     else:
         r = evaluate_path(G_cf, path)
         assert r["terminal_state"] != AttackTerminalState.COMPROMISED
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ILP-specific tests (v0.9.3)
+# ═══════════════════════════════════════════════════════════════════════
+
+from k8s_arsenal.runtime.minimal_cut import ilp_minimal_cut, HAS_PULP
+
+
+@pytest.mark.skipif(not HAS_PULP, reason="PuLP not installed")
+def test_ilp_minimal_cut_parallel_paths():
+    """ILP finds the exact minimal cut on parallel-path graph.
+
+    Two parallel paths share zero edges, so ILP must find 2 edges
+    (one from each path) — greedy overestimates on this graph.
+    """
+    g = _parallel_compromise_graph()
+    result = ilp_minimal_cut(g, "sa-A", "sa-D")
+
+    assert result["strategy"] == "ilp"
+    assert result["size"] == 2
+    assert result["total_compromised_paths"] == 2
+    assert result["ilp_status"] == "Optimal"
+    assert len(result["cut_edges"]) == 2
+
+
+@pytest.mark.skipif(not HAS_PULP, reason="PuLP not installed")
+def test_ilp_minimal_cut_single_path():
+    """ILP on a single-path graph finds the trivial one-edge cut."""
+    g = _single_path_graph()
+    result = ilp_minimal_cut(g, "sa-A", "sa-C")
+
+    assert result["strategy"] == "ilp (trivial)"
+    assert result["size"] == 1
+
+
+@pytest.mark.skipif(not HAS_PULP, reason="PuLP not installed")
+def test_ilp_minimal_cut_safe_graph():
+    """ILP on a safe graph (no COMPROMISED paths) returns empty cut."""
+    g = _safe_graph()
+    result = ilp_minimal_cut(g, "sa-A", "sa-B")
+
+    assert result["size"] == 0
+    assert result["cut_edges"] == []
+    assert result["strategy"] == "ilp"
+
+
+@pytest.mark.skipif(not HAS_PULP, reason="PuLP not installed")
+def test_ilp_result_structure():
+    """ILP result dict contains all expected fields."""
+    g = _parallel_compromise_graph()
+    result = ilp_minimal_cut(g, "sa-A", "sa-D")
+
+    for key in ("strategy", "cut_edges", "size", "baseline_paths", "explanation"):
+        assert key in result
+
+    assert "total_compromised_paths" in result
+    assert "candidate_edges" in result
+    assert "ilp_objective" in result
+    assert "ilp_status" in result
+    assert result["ilp_status"] == "Optimal"
+    assert result["size"] == result["ilp_objective"]
+
+
+@pytest.mark.skipif(not HAS_PULP, reason="PuLP not installed")
+def test_minimal_cut_set_uses_ilp():
+    """minimal_cut_set() with use_ilp=True should return ILP result."""
+    g = _parallel_compromise_graph()
+    result = minimal_cut_set(g, "sa-A", "sa-D", use_ilp=True)
+
+    assert result["strategy"] == "ilp"
+    assert result["size"] == 2
+
+
+@pytest.mark.skipif(not HAS_PULP, reason="PuLP not installed")
+def test_minimal_cut_set_disable_ilp():
+    """minimal_cut_set() with use_ilp=False falls back to old exact/greedy."""
+    g = _single_path_graph()
+    result = minimal_cut_set(g, "sa-A", "sa-C", use_ilp=False)
+
+    assert result["strategy"] in ("exact", "greedy (exact infeasible)")
+    assert result["size"] == 1
