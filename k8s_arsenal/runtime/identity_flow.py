@@ -38,7 +38,7 @@ def propagate_identity(edge: TrustEdge, state: IdentityState) -> IdentityState:
     Identity transitions happen on explicit identity-transfer edges only
     (TokenAccess or Impersonate). All other edges leave identity unchanged.
     """
-    edge_type = edge.metadata.get("edge_type", "")
+    edge_type = edge.metadata.get("edge_type") or edge.relationship or ""
 
     if edge_type in _IDENTITY_TRANSITION_TYPES:
         return IdentityState(

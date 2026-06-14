@@ -34,6 +34,7 @@ def build_trust_topology(
         credential_type="kubelet-client-current.pem",
         auto_rotated=True,
         risk=RiskLevel.HIGH,
+        metadata={"edge_type": "ClientCertAuth"},
     ))
 
     # kubelet → Pod (SA Token 挂载)
@@ -44,6 +45,7 @@ def build_trust_topology(
         credential_type="ServiceAccount Token (JWT)",
         auto_rotated=True,  # K8s 1.22+ 自动轮换
         risk=RiskLevel.HIGH,
+        metadata={"edge_type": "ServiceAccountToken"},
     ))
 
     # Pod → API Server (SA Token 使用)
@@ -54,6 +56,7 @@ def build_trust_topology(
         credential_type="ServiceAccount Token",
         auto_rotated=True,
         risk=RiskLevel.MEDIUM,
+        metadata={"edge_type": "BearerTokenAuth"},
     ))
 
     # API Server → etcd
@@ -64,6 +67,7 @@ def build_trust_topology(
         credential_type="etcd-client.crt",
         auto_rotated=True,
         risk=RiskLevel.CRITICAL,
+        metadata={"edge_type": "ClientCertAuth"},
     ))
 
     # kubelet → 容器运行时
@@ -74,6 +78,7 @@ def build_trust_topology(
         credential_type="Unix Domain Socket",
         auto_rotated=False,
         risk=RiskLevel.HIGH,
+        metadata={"edge_type": "UnixSocket"},
     ))
 
     # CoreDNS → API Server
@@ -84,6 +89,7 @@ def build_trust_topology(
         credential_type="CoreDNS ServiceAccount",
         auto_rotated=True,
         risk=RiskLevel.MEDIUM,
+        metadata={"edge_type": "SkipTLSVerify"},
     ))
 
     # kube-proxy → API Server
@@ -94,6 +100,7 @@ def build_trust_topology(
         credential_type="kube-proxy ServiceAccount (cluster-admin?)",
         auto_rotated=True,
         risk=RiskLevel.CRITICAL,
+        metadata={"edge_type": "ServiceAccount"},
     ))
 
     # 如果当前环境在 Pod 内，添加具体边
@@ -105,6 +112,7 @@ def build_trust_topology(
             credential_type=profile.service_account,
             auto_rotated=True,
             risk=RiskLevel.MEDIUM,
+            metadata={"edge_type": "PodTrust"},
         ))
 
     # 容器运行时 Socket 分析
@@ -116,6 +124,7 @@ def build_trust_topology(
             credential_type="Unix Domain Socket (/var/run/docker.sock)",
             auto_rotated=False,
             risk=RiskLevel.CRITICAL,
+            metadata={"edge_type": "DockerSocket"},
         ))
 
     return edges
