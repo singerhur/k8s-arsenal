@@ -17,6 +17,20 @@ All notable changes to K8s Arsenal will be documented in this file.
 - `validate_trace_result()` — 单入口运行全部 invariants
 - CI gate: `pytest -m invariants`，386 tests: 383 passed + 3 invariants marker tests = 386 collected (384 pass / 3 skip / 0 fail)
 
+## [0.9.1] - 2026-06-14
+
+### Fixed
+- **Edge Semantic Contract**: `build_trust_topology()` 产出的 TrustEdge 缺失 `metadata` 字段，
+  导致 v0.5-v0.9 runtime 管线在这些边上静默失效（identity_flow/capability_set/evaluator 读到空字符串）
+- `trust_map.py` 9 处 TrustEdge 调用添加 `metadata={"edge_type": "ClientCertAuth"}` 等，
+  8 种中文关系串映射为英文语义类型
+- `identity_flow.py` 添加 `edge.relationship` fallback：
+  `edge.metadata.get("edge_type") or edge.relationship or ""`
+
+### Changed
+- 无行为变更（T(S)/identity/capability 输出不变），仅数据可见性增强
+- 384 passed / 3 skipped / 0 failed — 零回归
+
 ## [0.8.0] - 2026-06-13
 
 ### Added
