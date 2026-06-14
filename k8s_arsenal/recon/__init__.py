@@ -16,6 +16,11 @@ from k8s_arsenal.recon.trust_map import (
     find_attackable_edges,
     render_trust_map_ascii,
 )
+from k8s_arsenal.recon.rbac_adapter import (
+    build_live_rbac_edges,
+    build_live_topology,
+    list_service_accounts,
+)
 
 __all__ = [
     "enumerate_environment",
@@ -27,4 +32,7 @@ __all__ = [
     "build_trust_topology",
     "find_attackable_edges",
     "render_trust_map_ascii",
+    "build_live_rbac_edges",
+    "build_live_topology",
+    "list_service_accounts",
 ]

@@ -2,6 +2,21 @@
 
 All notable changes to K8s Arsenal will be documented in this file.
 
+## [0.10.0] - 2026-06-14
+
+### Added
+- **Live RBAC Adapter** (`recon/rbac_adapter.py`): Real-time K8s RBAC trust edge discovery
+  - `build_live_rbac_edges()` — queries live cluster RoleBinding/ClusterRoleBinding to build TrustEdge objects
+  - `build_live_topology()` — drop-in replacement for `build_trust_topology()`, merges infrastructure + RBAC edges
+  - `list_service_accounts()` — discovers all SAs and resolves their effective RBAC rules
+  - Rule-to-edge-type inference: 10 dangerous verb/resource patterns mapped to 5 edge types (Impersonate, TokenAccess, NodeAccess, RbacEdge, PodTrust)
+  - Capability-to-risk-level mapping: CRITICAL (cluster_admin/impersonate/escalate) down to LOW
+  - 46 new unit + integration tests (mocked K8s API)
+- `recon/__init__.py` exports: `build_live_rbac_edges`, `build_live_topology`, `list_service_accounts`
+
+### Changed
+- Version: 0.9.3 -> 0.10.0 — first feature release since engine consolidation
+
 ## [0.9.0] - 2026-06-13
 
 ### Added
